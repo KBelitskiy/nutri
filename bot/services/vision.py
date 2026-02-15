@@ -4,22 +4,12 @@ import json
 
 from openai import AsyncOpenAI
 
-
-VISION_PROMPT = """
-Ты нутрициолог. Оцени блюдо по фото.
-Если пользователь прислал подпись к фото (граммовки, состав, название блюда) — обязательно учти её для более точной оценки порции и КБЖУ.
-Верни строго JSON-объект с полями:
-description (string), calories (number), protein_g (number), fat_g (number), carbs_g (number).
-Без markdown и без дополнительных комментариев.
-"""
+from bot.prompts import VISION_SYSTEM, vision_user_text
 
 
 def _user_content(image_url: str, caption: str | None) -> list[dict]:
-    text = "Оцени КБЖУ блюда по фото."
-    if caption and caption.strip():
-        text += f"\n\nПодпись пользователя к фото: {caption.strip()}"
     return [
-        {"type": "text", "text": text},
+        {"type": "text", "text": vision_user_text(caption)},
         {"type": "image_url", "image_url": {"url": image_url}},
     ]
 
@@ -30,7 +20,7 @@ async def analyze_meal_photo(
     response = await client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": VISION_PROMPT},
+            {"role": "system", "content": VISION_SYSTEM},
             {
                 "role": "user",
                 "content": _user_content(image_url, caption),

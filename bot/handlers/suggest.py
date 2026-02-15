@@ -6,6 +6,12 @@ from aiogram.types import Message
 
 from bot.database import crud
 from bot.keyboards import BTN_SUGGEST
+from bot.prompts import (
+    meals_block as prompts_meals_block,
+    suggest_profile_block as prompts_profile_block,
+    suggest_stats_block as prompts_stats_block,
+    suggest_prompt,
+)
 from bot.runtime import get_app_context
 
 router = Router()
@@ -29,34 +35,38 @@ async def suggest(message: Message) -> None:
     fat_left = max(0.0, user.daily_fat_target - consumed["fat_g"])
     carbs_left = max(0.0, user.daily_carbs_target - consumed["carbs_g"])
 
-    profile_block = (
-        "Профиль пользователя:\n"
-        f"- Пол: {user.gender}, возраст: {user.age} лет, рост: {user.height_cm} см, вес: {user.weight_start_kg} кг\n"
-        f"- Уровень активности: {user.activity_level}, цель: {user.goal}\n"
-        f"- Дневные цели: {user.daily_calories_target:.0f} ккал, "
-        f"Б {user.daily_protein_target:.0f} г, Ж {user.daily_fat_target:.0f} г, У {user.daily_carbs_target:.0f} г\n"
+    profile_block = prompts_profile_block(
+        gender=user.gender,
+        age=user.age,
+        height_cm=user.height_cm,
+        weight_start_kg=user.weight_start_kg,
+        activity_level=user.activity_level,
+        goal=user.goal,
+        daily_calories_target=user.daily_calories_target,
+        daily_protein_target=user.daily_protein_target,
+        daily_fat_target=user.daily_fat_target,
+        daily_carbs_target=user.daily_carbs_target,
     )
-    stats_block = (
-        "Потребление за сегодня:\n"
-        f"- Съедено: {consumed['calories']:.0f} ккал, Б {consumed['protein_g']:.0f} г, "
-        f"Ж {consumed['fat_g']:.0f} г, У {consumed['carbs_g']:.0f} г\n"
-        f"- Осталось до нормы: {calories_left:.0f} ккал, Б {protein_left:.0f} г, "
-        f"Ж {fat_left:.0f} г, У {carbs_left:.0f} г\n"
+    stats_block = prompts_stats_block(
+        consumed_calories=consumed["calories"],
+        consumed_protein=consumed["protein_g"],
+        consumed_fat=consumed["fat_g"],
+        consumed_carbs=consumed["carbs_g"],
+        calories_left=calories_left,
+        protein_left=protein_left,
+        fat_left=fat_left,
+        carbs_left=carbs_left,
     )
-    if meals_today:
-        meals_lines = [
-            f"  • {m.description}: {m.calories:.0f} ккал, Б {m.protein_g:.0f} / Ж {m.fat_g:.0f} / У {m.carbs_g:.0f} г"
-            for m in meals_today
-        ]
-        meals_block = "Приёмы пищи за сегодня:\n" + "\n".join(meals_lines) + "\n"
-    else:
-        meals_block = "Приёмов пищи за сегодня пока нет.\n"
+    meals_lines = [
+        f"  • {m.description}: {m.calories:.0f} ккал, Б {m.protein_g:.0f} / Ж {m.fat_g:.0f} / У {m.carbs_g:.0f} г"
+        for m in meals_today
+    ]
+    meals_block = prompts_meals_block(meals_lines)
 
-    prompt = (
-        "Предложи 3 варианта, чем добрать дневную норму, варианты могут быть как блюдами так и просто продуктами. Если это готовое блюдо - приложи рецепт блюда с указанием всех ингредиентов и их количества, если это продукт - просто опиши продукт и указание количества в граммах. "
-        "Учитывай остаток калорий и БЖУ, профиль и уже съеденное, твои рекомендации должны добивать дневную норму до 100% .\n\n"
-        f"{profile_block}\n{stats_block}\n{meals_block}\n"
-        "Дай конкретные варианты блюд/перекусов с примерными порциями и КБЖУ."
+    prompt = suggest_prompt(
+        profile_block=profile_block,
+        stats_block=stats_block,
+        meals_block=meals_block,
     )
     try:
         answer = await ctx.agent.ask(prompt, use_tools=False)

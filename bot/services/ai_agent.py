@@ -6,25 +6,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-
-SYSTEM_PROMPT = """
-Ты NutriBot — персональный нутрициолог.
-Правила:
-- Отвечай кратко, по делу и дружелюбно.
-- Приём пищи: если пользователь описывает, что съел, — проверь, достаточно ли данных для оценки КБЖУ.
-  Недостаточно: нет граммовок/порций (например «пюре с котлетками» без грамм), неясный состав (котлеты из чего — мясо/курица/рыба?), «немного», «чуть-чуть» без уточнений.
-  В таких случаях задай 1–2 коротких уточняющих вопроса (граммовки или состав) и не вызывай add_meal, пока не получишь ответ.
-  Вызывай add_meal только когда можно разумно оценить калории и БЖУ (есть порции в граммах или однозначное блюдо).
-- Для статистики и целей используй доступные tools.
-"""
-
-
-MEAL_PARSE_PROMPT = """
-Верни строго JSON для приема пищи с полями:
-description (string), calories (number), protein_g (number), fat_g (number), carbs_g (number), meal_type (string).
-meal_type один из: breakfast, lunch, dinner, snack.
-Без markdown.
-"""
+from bot.prompts import AGENT_SYSTEM, MEAL_PARSE
 
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -51,7 +33,7 @@ class AIAgent:
         use_tools: bool = True,
         history: list[tuple[str, str]] | None = None,
     ) -> str:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM}]
         if context:
             messages.append({"role": "system", "content": f"Контекст: {context}"})
         if history:
@@ -103,7 +85,7 @@ class AIAgent:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": MEAL_PARSE_PROMPT},
+                {"role": "system", "content": MEAL_PARSE},
                 {"role": "user", "content": text},
             ],
             temperature=0.2,

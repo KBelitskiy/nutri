@@ -13,6 +13,7 @@ from bot.handlers.start import OnboardingStates
 from bot.handlers.weight import WeightStates
 from bot.handlers.utils import progress_text
 from bot.keyboards import BTN_HISTORY, MAIN_MENU_BUTTONS
+from bot.prompts import context_message
 from bot.runtime import get_app_context
 from bot.services.vision import analyze_meal_photo
 
@@ -131,11 +132,7 @@ async def text_message(message: Message) -> None:
         await message.answer("Сначала пройди /start.")
         return
 
-    context = (
-        f"telegram_id={message.from_user.id}. "
-        "Пользователь может описывать приём пищи или задавать вопросы по питанию. "
-        "При вызове add_meal всегда передавай telegram_id из контекста."
-    )
+    context = context_message(message.from_user.id)
     user_id = message.from_user.id
     history = CONVERSATION_HISTORY.get(user_id, [])[-MAX_HISTORY_PAIRS:]
     try:
