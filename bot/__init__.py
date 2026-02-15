@@ -1,0 +1,2 @@
+"""NutriBot package."""
+

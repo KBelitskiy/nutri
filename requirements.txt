@@ -1,0 +1,13 @@
+aiogram>=3.4.1
+openai>=1.40.0
+SQLAlchemy[asyncio]>=2.0.30
+aiosqlite>=0.20.0
+python-dotenv>=1.0.1
+asyncpg>=0.30.0
+
+# тестирование
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
+# разработка (автоперезапуск бота)
+watchdog>=4.0.0

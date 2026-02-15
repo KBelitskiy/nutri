@@ -1,0 +1,5 @@
+runtime: python3.11
+entrypoint: python -m bot.main
+install:
+  - pip install -r requirements.txt
+
