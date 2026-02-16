@@ -58,7 +58,6 @@ async def meal_delete(callback) -> None:  # type: ignore[no-untyped-def]
         return
     meal_id = int(callback.data.split(":")[1])
     ctx = get_app_context()
-    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         ok = await crud.delete_meal_log(session, callback.from_user.id, meal_id)
     await callback.answer("Удалено" if ok else "Не найдено")
@@ -71,6 +70,7 @@ async def photo_meal(message: Message) -> None:
     if not message.from_user or not message.photo:
         return
     ctx = get_app_context()
+    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
         if user is None:
