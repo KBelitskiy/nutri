@@ -13,8 +13,11 @@ ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 class AIAgent:
-    def __init__(self, api_key: str, model: str):
-        self.client = AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str, *, base_url: str | None = None):
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**kwargs)
         self.model = model
         self._tools_schema: list[dict[str, Any]] = []
         self._tool_handlers: dict[str, ToolHandler] = {}

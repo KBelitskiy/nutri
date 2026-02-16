@@ -15,13 +15,17 @@ class Settings:
     database_url: str
     openai_model_text: str
     openai_model_vision: str
+    openai_base_url: str | None
     openai_max_requests_per_minute: int
     league_report_timezone: str
 
 
 def _default_sqlite_url() -> str:
-    sqlite_path = os.getenv("SQLITE_PATH", "./nutri.db")
-    path = Path(sqlite_path).resolve()
+    # На Amvera рекомендуется хранить SQLite в постоянном хранилище (/data),
+    # иначе файл может потеряться при пересборке/перезапуске.
+    default_path = "/data/nutri.db" if Path("/data").exists() else "./nutri.db"
+    sqlite_path = os.getenv("SQLITE_PATH", default_path)
+    path = Path(sqlite_path).expanduser().resolve()
     return f"sqlite+aiosqlite:///{path}"
 
 
@@ -32,6 +36,12 @@ def load_settings() -> Settings:
     db_url = os.getenv("DATABASE_URL", "").strip() or _default_sqlite_url()
     text_model = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini").strip()
     vision_model = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini").strip()
+    base_url = (
+        os.getenv("OPENAI_BASE_URL", "").strip()
+        or os.getenv("BASE_URL", "").strip()
+        or os.getenv("base_url", "").strip()
+        or None
+    )
     rpm = int(os.getenv("OPENAI_MAX_REQUESTS_PER_MINUTE", "20"))
     league_tz = os.getenv("LEAGUE_REPORT_TIMEZONE", "").strip()
     if not league_tz:
@@ -49,6 +59,7 @@ def load_settings() -> Settings:
         database_url=db_url,
         openai_model_text=text_model,
         openai_model_vision=vision_model,
+        openai_base_url=base_url,
         openai_max_requests_per_minute=rpm,
         league_report_timezone=league_tz,
     )

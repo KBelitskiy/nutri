@@ -1,5 +1,14 @@
-runtime: python3.11
-entrypoint: python -m bot.main
-install:
-  - pip install -r requirements.txt
+meta:
+  environment: python
+  toolchain:
+    name: pip
+    version: 3.11
+
+build:
+  requirementsPath: requirements.txt
+  useCache: true
+
+run:
+  command: python3 -m bot.main
+  persistenceMount: /data
 

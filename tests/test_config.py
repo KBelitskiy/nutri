@@ -61,6 +61,7 @@ class TestLoadSettings:
         assert s.database_url == "sqlite+aiosqlite:///./nutri.db"
         assert s.openai_model_text == "gpt-4o-mini"
         assert s.openai_model_vision == "gpt-4o-mini"
+        assert s.openai_base_url is None
         assert s.openai_max_requests_per_minute == 20
         assert isinstance(s.league_report_timezone, str)
         assert s.league_report_timezone
@@ -112,6 +113,20 @@ class TestLoadSettings:
                 s = load_settings()
         assert s.league_report_timezone == "Europe/Moscow"
 
+    def test_uses_env_openai_base_url_from_lowercase_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "OPENAI_API_KEY": "sk-fake",
+                "base_url": "https://api.proxyapi.ru/openai/v1",
+            },
+            clear=False,
+        ):
+            with patch("bot.config.load_dotenv"):
+                s = load_settings()
+        assert s.openai_base_url == "https://api.proxyapi.ru/openai/v1"
+
 
 class TestSettingsDataclass:
     def test_settings_instance_has_expected_fields(self) -> None:
@@ -121,6 +136,7 @@ class TestSettingsDataclass:
             database_url="sqlite:///",
             openai_model_text="gpt-4o-mini",
             openai_model_vision="gpt-4o-mini",
+            openai_base_url=None,
             openai_max_requests_per_minute=20,
             league_report_timezone="UTC",
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -36,6 +37,10 @@ def configure_agent(ctx: AppContext) -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
+    if settings.openai_base_url:
+        # Дублируем в env, чтобы SDK и любые внутренние клиенты использовали тот же endpoint.
+        os.environ["OPENAI_BASE_URL"] = settings.openai_base_url
+    logging.info("OpenAI base URL: %s", settings.openai_base_url or "default")
     init_engine(settings.database_url)
     await init_db()
 
@@ -43,7 +48,11 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(OpenAIRateLimitMiddleware(settings.openai_max_requests_per_minute))
 
-    agent = AIAgent(api_key=settings.openai_api_key, model=settings.openai_model_text)
+    agent = AIAgent(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model_text,
+        base_url=settings.openai_base_url,
+    )
     ctx = AppContext(settings=settings, sessionmaker=get_sessionmaker(), agent=agent)
     set_app_context(ctx)
     configure_agent(ctx)

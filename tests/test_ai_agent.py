@@ -8,6 +8,23 @@ import pytest
 from bot.services.ai_agent import AIAgent
 
 
+def test_init_passes_base_url_to_openai(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_openai(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr("bot.services.ai_agent.AsyncOpenAI", fake_openai)
+    AIAgent(
+        api_key="sk-fake",
+        model="gpt-4o-mini",
+        base_url="https://api.proxyapi.ru/openai/v1",
+    )
+    assert captured["api_key"] == "sk-fake"
+    assert captured["base_url"] == "https://api.proxyapi.ru/openai/v1"
+
+
 @pytest.fixture
 def mock_openai_client() -> MagicMock:
     client = MagicMock()
