@@ -53,6 +53,64 @@ async def test_send_weekly_reports_iterates_all_group_chats(monkeypatch) -> None
     send_weekly_for_chat.assert_awaited_once_with(bot, sessionmaker, -30, "UTC")
 
 
+async def test_send_weight_reminders_iterates_all_users(monkeypatch) -> None:
+    session = object()
+    sessionmaker = _sessionmaker_with_session(session)
+    bot = MagicMock()
+
+    monkeypatch.setattr(league_scheduler.crud, "get_all_user_ids", AsyncMock(return_value=[101, 202, 303]))
+    send_for_user = AsyncMock()
+    monkeypatch.setattr(league_scheduler, "_send_weight_reminder_for_user", send_for_user)
+
+    await league_scheduler.send_weight_reminders(bot, sessionmaker, "UTC")
+
+    assert send_for_user.await_count == 3
+    send_for_user.assert_any_await(bot, 101)
+    send_for_user.assert_any_await(bot, 202)
+    send_for_user.assert_any_await(bot, 303)
+
+
+def test_start_league_scheduler_adds_weight_reminder_job(monkeypatch) -> None:
+    class _DummyScheduler:
+        def __init__(self, timezone):  # noqa: ANN001
+            self.timezone = timezone
+            self.jobs = []
+            self.started = False
+
+        def add_job(self, func, trigger, kwargs, id, replace_existing):  # noqa: ANN001, A002
+            self.jobs.append(
+                {
+                    "func": func,
+                    "trigger": trigger,
+                    "kwargs": kwargs,
+                    "id": id,
+                    "replace_existing": replace_existing,
+                }
+            )
+
+        def start(self):  # noqa: D401
+            self.started = True
+
+    class _DummyCron:
+        def __init__(self, **kw):  # noqa: ANN003
+            self.kw = kw
+
+    bot = MagicMock()
+    sessionmaker = MagicMock()
+    monkeypatch.setattr(league_scheduler, "AsyncIOScheduler", _DummyScheduler)
+    monkeypatch.setattr(league_scheduler, "CronTrigger", _DummyCron)
+
+    scheduler = league_scheduler.start_league_scheduler(bot, sessionmaker, "UTC")
+
+    assert scheduler.started is True
+    ids = {j["id"] for j in scheduler.jobs}
+    assert "weight_reminder_9am" in ids
+    weight_job = next(j for j in scheduler.jobs if j["id"] == "weight_reminder_9am")
+    assert weight_job["func"] is league_scheduler.send_weight_reminders
+    assert weight_job["trigger"].kw["hour"] == 9
+    assert weight_job["trigger"].kw["minute"] == 0
+
+
 async def test_start_league_scheduler_fallback_when_apscheduler_missing(monkeypatch) -> None:
     bot = MagicMock()
     sessionmaker = MagicMock()

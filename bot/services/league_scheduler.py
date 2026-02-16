@@ -33,6 +33,7 @@ class AsyncioLeagueScheduler:
     def start(self) -> None:
         self._tasks.append(asyncio.create_task(self._run_daily(), name="league_daily_report"))
         self._tasks.append(asyncio.create_task(self._run_weekly(), name="league_weekly_report"))
+        self._tasks.append(asyncio.create_task(self._run_weight_reminders(), name="weight_reminder_9am"))
 
     def shutdown(self, wait: bool = False) -> None:
         _ = wait
@@ -49,6 +50,11 @@ class AsyncioLeagueScheduler:
         while True:
             await asyncio.sleep(self._seconds_until(hour=23, minute=0, weekday=6))
             await send_weekly_reports(self.bot, self.sessionmaker, self.timezone_name)
+
+    async def _run_weight_reminders(self) -> None:
+        while True:
+            await asyncio.sleep(self._seconds_until(hour=9, minute=0))
+            await send_weight_reminders(self.bot, self.sessionmaker, self.timezone_name)
 
     def _seconds_until(self, hour: int, minute: int, weekday: int | None = None) -> float:
         now = datetime.now(tz=self._tz)
@@ -68,6 +74,23 @@ async def _group_chat_ids(sessionmaker: async_sessionmaker) -> list[int]:
     async with sessionmaker() as session:
         chats = await crud.get_group_chats(session)
     return [chat.chat_id for chat in chats]
+
+
+async def _user_ids(sessionmaker: async_sessionmaker) -> list[int]:
+    async with sessionmaker() as session:
+        return await crud.get_all_user_ids(session)
+
+
+async def _send_weight_reminder_for_user(bot: Bot, user_id: int) -> None:
+    text = "Доброе утро! Не забудь взвеситься и отправить вес командой /weight."
+    try:
+        await bot.send_message(chat_id=user_id, text=text)
+    except (TelegramForbiddenError, TelegramBadRequest):
+        # Пользователь мог заблокировать бота или удалить чат.
+        # Данные пользователя не удаляем, чтобы не терять историю.
+        logger.warning("Cannot send weight reminder to user %s (chat unavailable)", user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to send weight reminder to user %s", user_id)
 
 
 async def _send_daily_for_chat(
@@ -114,6 +137,12 @@ async def send_weekly_reports(bot: Bot, sessionmaker: async_sessionmaker, timezo
         await _send_weekly_for_chat(bot, sessionmaker, chat_id, timezone_name)
 
 
+async def send_weight_reminders(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    _ = timezone_name
+    for user_id in await _user_ids(sessionmaker):
+        await _send_weight_reminder_for_user(bot, user_id)
+
+
 def start_league_scheduler(
     bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str
 ) -> AsyncIOScheduler | AsyncioLeagueScheduler:
@@ -143,6 +172,13 @@ def start_league_scheduler(
         CronTrigger(day_of_week="sun", hour=23, minute=0, timezone=tz),
         kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
         id="league_weekly_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_weight_reminders,
+        CronTrigger(hour=9, minute=0, timezone=tz),
+        kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
+        id="weight_reminder_9am",
         replace_existing=True,
     )
     scheduler.start()

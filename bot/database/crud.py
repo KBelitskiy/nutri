@@ -25,6 +25,11 @@ async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_all_user_ids(session: AsyncSession) -> list[int]:
+    result = await session.execute(select(User.telegram_id).order_by(User.telegram_id.asc()))
+    return [int(x) for x in result.scalars().all()]
+
+
 async def get_users_by_ids(session: AsyncSession, telegram_ids: list[int]) -> list[User]:
     if not telegram_ids:
         return []
