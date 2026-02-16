@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import Command, or_f, StateFilter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from zoneinfo import ZoneInfo
 
 from bot.database import crud
 
@@ -25,12 +26,13 @@ async def history(message: Message) -> None:
     if not message.from_user:
         return
     ctx = get_app_context()
+    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
         if user is None:
             await message.answer("Сначала пройди /start.")
             return
-        meals = await crud.get_meals_for_day(session, message.from_user.id)
+        meals = await crud.get_meals_for_day(session, message.from_user.id, timezone=tz)
 
     if not meals:
         await message.answer("За сегодня приемов пищи пока нет.")
@@ -56,6 +58,7 @@ async def meal_delete(callback) -> None:  # type: ignore[no-untyped-def]
         return
     meal_id = int(callback.data.split(":")[1])
     ctx = get_app_context()
+    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         ok = await crud.delete_meal_log(session, callback.from_user.id, meal_id)
     await callback.answer("Удалено" if ok else "Не найдено")
@@ -103,7 +106,9 @@ async def photo_meal(message: Message) -> None:
             meal_type="snack",
         )
         user = await crud.get_user(session, message.from_user.id)
-        consumed = await crud.get_meal_summary_for_day(session, message.from_user.id)
+        consumed = await crud.get_meal_summary_for_day(
+            session, message.from_user.id, timezone=tz
+        )
 
     if user is None:
         await message.answer("Сначала пройди /start.")

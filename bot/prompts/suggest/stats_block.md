@@ -1,3 +1,5 @@
-Потребление за сегодня:
-- Съедено: {{consumed_calories}} ккал, Б {{consumed_protein}} г, Ж {{consumed_fat}} г, У {{consumed_carbs}} г
-- Осталось до нормы: {{calories_left}} ккал, Б {{protein_left}} г, Ж {{fat_left}} г, У {{carbs_left}} г
+## Потребление за сегодня
+Эти цифры показывают, сколько пользователь уже съел и сколько осталось до дневной нормы. Рекомендации должны помогать закрыть именно **остаток**, а не всю норму с нуля.
+
+- Съедено: {{consumed_calories}} ккал, белки {{consumed_protein}} г, жиры {{consumed_fat}} г, углеводы {{consumed_carbs}} г
+- Осталось до нормы: {{calories_left}} ккал, белки {{protein_left}} г, жиры {{fat_left}} г, углеводы {{carbs_left}} г

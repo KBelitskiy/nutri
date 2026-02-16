@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command, or_f
@@ -23,21 +24,25 @@ async def stats(message: Message) -> None:
     if len(parts) == 2 and parts[1] in {"day", "week", "month"}:
         period = parts[1]
 
-    now = datetime.now(tz=UTC)
+    ctx = get_app_context()
+    tz = ZoneInfo(ctx.settings.league_report_timezone)
+    now_local = datetime.now(tz=tz)
+    now = now_local.astimezone(UTC)
     if period == "day":
-        start = now - timedelta(days=1)
+        start, end = crud.day_bounds(timezone=tz)
     elif period == "month":
         start = now - timedelta(days=30)
+        end = now
     else:
         start = now - timedelta(days=7)
+        end = now
 
-    ctx = get_app_context()
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
         if user is None:
             await message.answer("Сначала пройди /start.")
             return
-        stats_data = await crud.get_meal_stats(session, message.from_user.id, start, now)
+        stats_data = await crud.get_meal_stats(session, message.from_user.id, start, end)
 
     meals_count = int(stats_data["meals_count"])
     if meals_count == 0:

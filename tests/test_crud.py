@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,12 @@ class TestDayBounds:
         today = datetime.now(tz=UTC).date()
         assert start.date() == today
         assert end.date() == today
+
+    def test_respects_local_timezone_day_boundaries(self) -> None:
+        tz = ZoneInfo("Europe/Moscow")
+        start, end = crud.day_bounds(date(2025, 2, 16), timezone=tz)
+        assert start == datetime(2025, 2, 15, 21, 0, 0, tzinfo=UTC)
+        assert end == datetime(2025, 2, 16, 20, 59, 59, 999999, tzinfo=UTC)
 
 
 class TestGetUser:
@@ -195,3 +202,66 @@ class TestGetMealStats:
         stats = await crud.get_meal_stats(session, tid, start, end)
         assert stats["avg_calories"] == 300.0
         assert stats["meals_count"] == 2
+
+
+class TestMealSummaryForPeriod:
+    async def test_returns_sum_for_period(
+        self, session: AsyncSession, sample_user_data: dict
+    ) -> None:
+        await crud.create_or_update_user(session, sample_user_data)
+        tid = sample_user_data["telegram_id"]
+        await crud.add_meal_log(session, tid, "a", 100.0, 10.0, 5.0, 20.0)
+        await crud.add_meal_log(session, tid, "b", 200.0, 20.0, 10.0, 40.0)
+        start = datetime(2020, 1, 1, tzinfo=UTC)
+        end = datetime(2030, 1, 1, tzinfo=UTC)
+        summary = await crud.get_meal_summary_for_period(session, tid, start, end)
+        assert summary["calories"] == 300.0
+        assert summary["protein_g"] == 30.0
+        assert summary["fat_g"] == 15.0
+        assert summary["carbs_g"] == 60.0
+
+
+class TestLatestWeightAtOrBefore:
+    async def test_returns_latest_weight_before_moment(
+        self, session: AsyncSession, sample_user_data: dict
+    ) -> None:
+        await crud.create_or_update_user(session, sample_user_data)
+        tid = sample_user_data["telegram_id"]
+        first = await crud.add_weight_log(session, tid, 80.0)
+        second = await crud.add_weight_log(session, tid, 79.0)
+
+        first.logged_at = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+        second.logged_at = datetime(2026, 1, 2, 9, 0, tzinfo=UTC)
+        await session.commit()
+
+        row = await crud.get_latest_weight_at_or_before(
+            session, tid, datetime(2026, 1, 1, 23, 59, tzinfo=UTC)
+        )
+        assert row is not None
+        assert row.weight_kg == 80.0
+
+
+class TestGroupChatCrud:
+    async def test_add_member_and_list_chats(
+        self, session: AsyncSession, sample_user_data: dict
+    ) -> None:
+        await crud.create_or_update_user(session, sample_user_data)
+        chat = await crud.add_group_chat(session, -100123, "Test Group")
+        assert chat.chat_id == -100123
+        await crud.ensure_group_member(session, -100123, sample_user_data["telegram_id"])
+        member_ids = await crud.get_chat_member_user_ids(session, -100123)
+        assert member_ids == [sample_user_data["telegram_id"]]
+
+        chats = await crud.get_group_chats(session)
+        assert len(chats) == 1
+        assert chats[0].chat_id == -100123
+
+    async def test_remove_group_chat(
+        self, session: AsyncSession, sample_user_data: dict
+    ) -> None:
+        await crud.create_or_update_user(session, sample_user_data)
+        await crud.add_group_chat(session, -100234, "Temp Group")
+        await crud.ensure_group_member(session, -100234, sample_user_data["telegram_id"])
+        await crud.remove_group_chat(session, -100234)
+        chats = await crud.get_group_chats(session)
+        assert chats == []

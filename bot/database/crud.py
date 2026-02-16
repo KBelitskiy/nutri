@@ -1,24 +1,35 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, tzinfo
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.models import MealLog, User, WeightLog
+from bot.database.models import GroupChat, GroupChatMember, MealLog, User, WeightLog
 
 
-def day_bounds(target_date: date | None = None) -> tuple[datetime, datetime]:
-    d = target_date or datetime.now(tz=UTC).date()
-    start = datetime.combine(d, time.min, tzinfo=UTC)
-    end = datetime.combine(d, time.max, tzinfo=UTC)
-    return start, end
+def day_bounds(
+    target_date: date | None = None,
+    *,
+    timezone: tzinfo = UTC,
+) -> tuple[datetime, datetime]:
+    d = target_date or datetime.now(tz=timezone).date()
+    start_local = datetime.combine(d, time.min, tzinfo=timezone)
+    end_local = datetime.combine(d, time.max, tzinfo=timezone)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     return result.scalar_one_or_none()
+
+
+async def get_users_by_ids(session: AsyncSession, telegram_ids: list[int]) -> list[User]:
+    if not telegram_ids:
+        return []
+    result = await session.execute(select(User).where(User.telegram_id.in_(telegram_ids)))
+    return list(result.scalars().all())
 
 
 async def create_or_update_user(session: AsyncSession, data: dict[str, Any]) -> User:
@@ -45,6 +56,18 @@ async def add_weight_log(session: AsyncSession, telegram_id: int, weight_kg: flo
     await session.commit()
     await session.refresh(row)
     return row
+
+
+async def get_latest_weight_at_or_before(
+    session: AsyncSession, telegram_id: int, at_or_before: datetime
+) -> WeightLog | None:
+    result = await session.execute(
+        select(WeightLog)
+        .where(WeightLog.telegram_id == telegram_id, WeightLog.logged_at <= at_or_before)
+        .order_by(WeightLog.logged_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_weight_logs(session: AsyncSession, telegram_id: int, limit: int = 30) -> list[WeightLog]:
@@ -104,9 +127,13 @@ async def delete_meal_log(session: AsyncSession, telegram_id: int, meal_id: int)
 
 
 async def get_meals_for_day(
-    session: AsyncSession, telegram_id: int, target_date: date | None = None
+    session: AsyncSession,
+    telegram_id: int,
+    target_date: date | None = None,
+    *,
+    timezone: tzinfo = UTC,
 ) -> list[MealLog]:
-    start, end = day_bounds(target_date)
+    start, end = day_bounds(target_date, timezone=timezone)
     result = await session.execute(
         select(MealLog)
         .where(MealLog.telegram_id == telegram_id, MealLog.logged_at >= start, MealLog.logged_at <= end)
@@ -116,9 +143,33 @@ async def get_meals_for_day(
 
 
 async def get_meal_summary_for_day(
-    session: AsyncSession, telegram_id: int, target_date: date | None = None
+    session: AsyncSession,
+    telegram_id: int,
+    target_date: date | None = None,
+    *,
+    timezone: tzinfo = UTC,
 ) -> dict[str, float]:
-    start, end = day_bounds(target_date)
+    start, end = day_bounds(target_date, timezone=timezone)
+    result = await session.execute(
+        select(
+            func.coalesce(func.sum(MealLog.calories), 0.0),
+            func.coalesce(func.sum(MealLog.protein_g), 0.0),
+            func.coalesce(func.sum(MealLog.fat_g), 0.0),
+            func.coalesce(func.sum(MealLog.carbs_g), 0.0),
+        ).where(MealLog.telegram_id == telegram_id, MealLog.logged_at >= start, MealLog.logged_at <= end)
+    )
+    calories, protein, fat, carbs = result.one()
+    return {
+        "calories": float(calories or 0.0),
+        "protein_g": float(protein or 0.0),
+        "fat_g": float(fat or 0.0),
+        "carbs_g": float(carbs or 0.0),
+    }
+
+
+async def get_meal_summary_for_period(
+    session: AsyncSession, telegram_id: int, start: datetime, end: datetime
+) -> dict[str, float]:
     result = await session.execute(
         select(
             func.coalesce(func.sum(MealLog.calories), 0.0),
@@ -156,4 +207,47 @@ async def get_meal_stats(
         "avg_carbs_g": float(avg_c or 0.0),
         "meals_count": float(count or 0),
     }
+
+
+async def add_group_chat(session: AsyncSession, chat_id: int, title: str | None = None) -> GroupChat:
+    chat = await session.get(GroupChat, chat_id)
+    if chat is None:
+        chat = GroupChat(chat_id=chat_id, title=title)
+        session.add(chat)
+    else:
+        chat.title = title
+    await session.commit()
+    await session.refresh(chat)
+    return chat
+
+
+async def remove_group_chat(session: AsyncSession, chat_id: int) -> None:
+    await session.execute(delete(GroupChat).where(GroupChat.chat_id == chat_id))
+    await session.commit()
+
+
+async def get_group_chats(session: AsyncSession) -> list[GroupChat]:
+    result = await session.execute(select(GroupChat).order_by(GroupChat.chat_id.asc()))
+    return list(result.scalars().all())
+
+
+async def ensure_group_member(
+    session: AsyncSession, chat_id: int, telegram_id: int
+) -> GroupChatMember:
+    row = await session.get(GroupChatMember, {"chat_id": chat_id, "telegram_id": telegram_id})
+    if row is None:
+        row = GroupChatMember(chat_id=chat_id, telegram_id=telegram_id)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+async def get_chat_member_user_ids(session: AsyncSession, chat_id: int) -> list[int]:
+    result = await session.execute(
+        select(GroupChatMember.telegram_id)
+        .where(GroupChatMember.chat_id == chat_id)
+        .order_by(GroupChatMember.telegram_id.asc())
+    )
+    return list(result.scalars().all())
 

@@ -1,3 +1,4 @@
+from bot.handlers.group import router as group_router
 from bot.handlers.help import router as help_router
 from bot.handlers.meal import router as meal_router
 from bot.handlers.settings import router as settings_router
@@ -8,6 +9,7 @@ from bot.handlers.today import router as today_router
 from bot.handlers.weight import router as weight_router
 
 ALL_ROUTERS = [
+    group_router,
     start_router,
     settings_router,
     today_router,

@@ -12,6 +12,7 @@ from bot.handlers import ALL_ROUTERS
 from bot.middlewares.rate_limit import OpenAIRateLimitMiddleware
 from bot.runtime import AppContext, set_app_context
 from bot.services.ai_agent import AIAgent
+from bot.services.league_scheduler import start_league_scheduler
 from bot.tools.meal_tools import meal_tool_handlers, meal_tools_schema
 from bot.tools.stats_tools import stats_tool_handlers, stats_tools_schema
 from bot.tools.user_tools import user_tool_handlers, user_tools_schema
@@ -49,8 +50,15 @@ async def main() -> None:
 
     for router in ALL_ROUTERS:
         dp.include_router(router)
-
-    await dp.start_polling(bot)
+    scheduler = start_league_scheduler(
+        bot=bot,
+        sessionmaker=ctx.sessionmaker,
+        timezone_name=ctx.settings.league_report_timezone,
+    )
+    try:
+        await dp.start_polling(bot)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 if __name__ == "__main__":

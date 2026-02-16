@@ -62,6 +62,8 @@ class TestLoadSettings:
         assert s.openai_model_text == "gpt-4o-mini"
         assert s.openai_model_vision == "gpt-4o-mini"
         assert s.openai_max_requests_per_minute == 20
+        assert isinstance(s.league_report_timezone, str)
+        assert s.league_report_timezone
 
     def test_uses_env_database_url_when_set(self) -> None:
         with patch.dict(
@@ -96,6 +98,20 @@ class TestLoadSettings:
         assert s.openai_model_vision == "gpt-4o"
         assert s.openai_max_requests_per_minute == 10
 
+    def test_uses_env_league_timezone(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "OPENAI_API_KEY": "sk-fake",
+                "LEAGUE_REPORT_TIMEZONE": "Europe/Moscow",
+            },
+            clear=False,
+        ):
+            with patch("bot.config.load_dotenv"):
+                s = load_settings()
+        assert s.league_report_timezone == "Europe/Moscow"
+
 
 class TestSettingsDataclass:
     def test_settings_instance_has_expected_fields(self) -> None:
@@ -106,6 +122,7 @@ class TestSettingsDataclass:
             openai_model_text="gpt-4o-mini",
             openai_model_vision="gpt-4o-mini",
             openai_max_requests_per_minute=20,
+            league_report_timezone="UTC",
         )
         assert s.telegram_bot_token == "t"
         assert s.openai_api_key == "k"

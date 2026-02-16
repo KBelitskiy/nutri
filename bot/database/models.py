@@ -71,3 +71,26 @@ class MealLog(Base):
 
     user: Mapped[User] = relationship(back_populates="meal_logs")
 
+
+class GroupChat(Base):
+    __tablename__ = "group_chats"
+
+    chat_id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class GroupChatMember(Base):
+    __tablename__ = "group_chat_members"
+
+    chat_id: Mapped[int] = mapped_column(
+        ForeignKey("group_chats.chat_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    telegram_id: Mapped[int] = mapped_column(primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+

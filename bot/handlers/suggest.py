@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import Command, or_f
 from aiogram.types import Message
+from zoneinfo import ZoneInfo
 
 from bot.database import crud
 from bot.keyboards import BTN_SUGGEST
@@ -22,13 +23,16 @@ async def suggest(message: Message) -> None:
     if not message.from_user:
         return
     ctx = get_app_context()
+    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
         if user is None:
             await message.answer("Сначала пройди /start.")
             return
-        consumed = await crud.get_meal_summary_for_day(session, message.from_user.id)
-        meals_today = await crud.get_meals_for_day(session, message.from_user.id)
+        consumed = await crud.get_meal_summary_for_day(
+            session, message.from_user.id, timezone=tz
+        )
+        meals_today = await crud.get_meals_for_day(session, message.from_user.id, timezone=tz)
 
     calories_left = max(0.0, user.daily_calories_target - consumed["calories"])
     protein_left = max(0.0, user.daily_protein_target - consumed["protein_g"])

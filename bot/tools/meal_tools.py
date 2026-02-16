@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -37,7 +37,10 @@ def meal_tools_schema() -> list[dict[str, Any]]:
                 "description": "Возвращает приемы пищи за сегодня",
                 "parameters": {
                     "type": "object",
-                    "properties": {"telegram_id": {"type": "integer"}},
+                    "properties": {
+                        "telegram_id": {"type": "integer"},
+                        "timezone": {"type": "string"},
+                    },
                     "required": ["telegram_id"],
                 },
             },
@@ -90,7 +93,13 @@ def meal_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
 
     async def get_meals_today(args: dict[str, Any]) -> dict[str, Any]:
         async with sessionmaker() as session:
-            meals = await crud.get_meals_for_day(session, int(args["telegram_id"]), datetime.now(tz=UTC).date())
+            timezone_name = str(args.get("timezone", "UTC"))
+            tz = ZoneInfo(timezone_name)
+            meals = await crud.get_meals_for_day(
+                session,
+                int(args["telegram_id"]),
+                timezone=tz,
+            )
             return {
                 "meals": [
                     {

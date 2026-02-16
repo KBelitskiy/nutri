@@ -9,6 +9,8 @@ BTN_PROFILE = "👤 Профиль"
 BTN_STATS = "📈 Статистика"
 BTN_HISTORY = "📋 История"
 BTN_SUGGEST = "💡 Рекомендации"
+BTN_LEAGUE_TODAY = "🏁 Лига: сегодня"
+BTN_LEAGUE_WEEK = "🏁 Лига: неделя"
 
 # Подменю «Профиль»
 BTN_WEIGHT = "⚖️ Вес"
@@ -45,6 +47,14 @@ PROFILE_SUBMENU_KB = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_WEIGHT), KeyboardButton(text=BTN_HELP)],
         [KeyboardButton(text=BTN_RESET)],
         [KeyboardButton(text=BTN_BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+# Меню в групповом чате: ручной запуск лиговых сводок
+GROUP_MENU_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_LEAGUE_TODAY), KeyboardButton(text=BTN_LEAGUE_WEEK)],
     ],
     resize_keyboard=True,
 )

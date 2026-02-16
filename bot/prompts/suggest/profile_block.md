@@ -1,4 +1,7 @@
-Профиль пользователя:
+## Профиль пользователя
+Используй эти данные для контекста рекомендаций (пол, возраст, параметры, цель и дневные цели по КБЖУ).
+
 - Пол: {{gender}}, возраст: {{age}} лет, рост: {{height_cm}} см, вес: {{weight_start_kg}} кг
-- Уровень активности: {{activity_level}}, цель: {{goal}}
-- Дневные цели: {{daily_calories_target}} ккал, Б {{daily_protein_target}} г, Ж {{daily_fat_target}} г, У {{daily_carbs_target}} г
+- Уровень активности: {{activity_level}} (учитывай при объёме порций и калорийности)
+- Цель: {{goal}} (lose — похудение, maintain — поддержание веса, gain — набор массы)
+- Дневные цели по КБЖУ: {{daily_calories_target}} ккал, белки {{daily_protein_target}} г, жиры {{daily_fat_target}} г, углеводы {{daily_carbs_target}} г

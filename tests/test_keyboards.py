@@ -7,12 +7,15 @@ from bot.keyboards import (
     BTN_BACK,
     BTN_HELP,
     BTN_HISTORY,
+    BTN_LEAGUE_TODAY,
+    BTN_LEAGUE_WEEK,
     BTN_PROFILE,
     BTN_RESET,
     BTN_STATS,
     BTN_SUGGEST,
     BTN_TODAY,
     BTN_WEIGHT,
+    GROUP_MENU_KB,
     MAIN_MENU_BUTTONS,
     MAIN_MENU_KB,
     PROFILE_SUBMENU_KB,
@@ -59,3 +62,11 @@ def test_main_menu_resize_keyboard() -> None:
 
 def test_profile_submenu_resize_keyboard() -> None:
     assert PROFILE_SUBMENU_KB.resize_keyboard is True
+
+
+def test_group_menu_kb_has_league_buttons() -> None:
+    rows = GROUP_MENU_KB.keyboard
+    all_texts = [btn.text for row in rows for btn in row]
+    assert BTN_LEAGUE_TODAY in all_texts
+    assert BTN_LEAGUE_WEEK in all_texts
+    assert GROUP_MENU_KB.resize_keyboard is True

@@ -70,10 +70,9 @@ class RestartHandler(FileSystemEventHandler):
     def set_grace_until(self, until: float) -> None:
         self._grace_until = until
 
-    def on_modified(self, event: FileSystemEvent) -> None:
-        if event.is_directory:
+    def _maybe_trigger(self, path: str, is_directory: bool) -> None:
+        if is_directory:
             return
-        path = event.src_path
         if path.endswith(".py") and "__pycache__" not in path:
             now = time.monotonic()
             if now < self._grace_until:
@@ -81,6 +80,18 @@ class RestartHandler(FileSystemEventHandler):
             if now - self._last_call >= self._debounce:
                 self._last_call = now
                 self._callback()
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        self._maybe_trigger(event.src_path, event.is_directory)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        self._maybe_trigger(event.src_path, event.is_directory)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        # Многие редакторы сохраняют файл как "tmp -> rename", поэтому
+        # отслеживаем также dest_path, чтобы не пропускать изменения.
+        dest_path = getattr(event, "dest_path", "")
+        self._maybe_trigger(dest_path or event.src_path, event.is_directory)
 
 
 def main() -> None:
@@ -100,7 +111,7 @@ def main() -> None:
 
     def restart() -> None:
         nonlocal process
-        if process is not None:
+        if process is not None and process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=5)
@@ -122,7 +133,9 @@ def main() -> None:
     try:
         while True:
             if process.poll() is not None:
-                sys.exit(process.returncode or 1)
+                code = process.returncode
+                print(f"\n--- процесс бота завершился (code={code}), перезапуск ---\n", flush=True)
+                restart()
             time.sleep(0.5)
     except KeyboardInterrupt:
         observer.stop()
