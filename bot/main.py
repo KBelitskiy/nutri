@@ -52,6 +52,7 @@ async def main() -> None:
         api_key=settings.openai_api_key,
         model=settings.openai_model_text,
         base_url=settings.openai_base_url,
+        vision_model=settings.openai_model_vision,
     )
     ctx = AppContext(settings=settings, sessionmaker=get_sessionmaker(), agent=agent)
     set_app_context(ctx)

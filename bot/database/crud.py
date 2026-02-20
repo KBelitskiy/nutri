@@ -173,6 +173,17 @@ async def get_meals_for_day(
     return list(result.scalars().all())
 
 
+async def get_meals_for_period(
+    session: AsyncSession, telegram_id: int, start: datetime, end: datetime
+) -> list[MealLog]:
+    result = await session.execute(
+        select(MealLog)
+        .where(MealLog.telegram_id == telegram_id, MealLog.logged_at >= start, MealLog.logged_at <= end)
+        .order_by(MealLog.logged_at.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def get_meal_summary_for_day(
     session: AsyncSession,
     telegram_id: int,

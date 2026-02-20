@@ -15,17 +15,20 @@ def meal_tools_schema() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "add_meal",
-                "description": "Добавляет прием пищи",
+                "description": "Добавляет прием пищи. Возвращает daily_summary с текущим потреблением и целями.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "telegram_id": {"type": "integer"},
-                        "description": {"type": "string"},
+                        "description": {"type": "string", "description": "Описание блюда для дневника"},
                         "calories": {"type": "number"},
                         "protein_g": {"type": "number"},
                         "fat_g": {"type": "number"},
                         "carbs_g": {"type": "number"},
-                        "meal_type": {"type": "string"},
+                        "meal_type": {
+                            "type": "string",
+                            "enum": ["breakfast", "lunch", "dinner", "snack"],
+                        },
                     },
                     "required": ["telegram_id", "description", "calories", "protein_g", "fat_g", "carbs_g"],
                 },
@@ -35,12 +38,28 @@ def meal_tools_schema() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_meals_today",
-                "description": "Возвращает приемы пищи за сегодня",
+                "description": "Возвращает список приемов пищи за сегодня с КБЖУ каждого",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "telegram_id": {"type": "integer"},
-                        "timezone": {"type": "string"},
+                    },
+                    "required": ["telegram_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_today_summary",
+                "description": (
+                    "Возвращает полную сводку за сегодня: список приемов пищи, "
+                    "суммарное потребление КБЖУ, дневные цели и прогресс (процент, остаток)"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "telegram_id": {"type": "integer"},
                     },
                     "required": ["telegram_id"],
                 },
@@ -50,7 +69,7 @@ def meal_tools_schema() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "delete_meal",
-                "description": "Удаляет прием пищи по id",
+                "description": "Удаляет прием пищи по id. Используй get_meals_today чтобы узнать id нужного приема.",
                 "parameters": {
                     "type": "object",
                     "properties": {"telegram_id": {"type": "integer"}, "meal_id": {"type": "integer"}},
@@ -62,13 +81,19 @@ def meal_tools_schema() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "update_meal",
-                "description": "Редактирует прием пищи по id",
+                "description": (
+                    "Редактирует прием пищи по id. Можно обновить любые поля: "
+                    "description, calories, protein_g, fat_g, carbs_g, meal_type"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "telegram_id": {"type": "integer"},
                         "meal_id": {"type": "integer"},
-                        "fields": {"type": "object"},
+                        "fields": {
+                            "type": "object",
+                            "description": "Поля для обновления, например {\"calories\": 350, \"protein_g\": 25}",
+                        },
                     },
                     "required": ["telegram_id", "meal_id", "fields"],
                 },
@@ -114,8 +139,6 @@ def meal_tool_handlers(sessionmaker: async_sessionmaker, *, timezone_name: str =
 
     async def get_meals_today(args: dict[str, Any]) -> dict[str, Any]:
         async with sessionmaker() as session:
-            timezone_name = str(args.get("timezone", "UTC"))
-            tz = ZoneInfo(timezone_name)
             meals = await crud.get_meals_for_day(
                 session,
                 int(args["telegram_id"]),
@@ -137,6 +160,40 @@ def meal_tool_handlers(sessionmaker: async_sessionmaker, *, timezone_name: str =
                 ]
             }
 
+    async def get_today_summary(args: dict[str, Any]) -> dict[str, Any]:
+        tid = int(args["telegram_id"])
+        async with sessionmaker() as session:
+            user = await crud.get_user(session, tid)
+            if user is None:
+                return {"error": "User not found"}
+            consumed = await crud.get_meal_summary_for_day(session, tid, timezone=tz)
+            meals = await crud.get_meals_for_day(session, tid, timezone=tz)
+
+        targets = {
+            "daily_calories_target": user.daily_calories_target,
+            "daily_protein_target": user.daily_protein_target,
+            "daily_fat_target": user.daily_fat_target,
+            "daily_carbs_target": user.daily_carbs_target,
+        }
+        progress = summarize_progress(consumed, targets)
+        return {
+            "meals": [
+                {
+                    "id": m.id,
+                    "description": m.description,
+                    "calories": m.calories,
+                    "protein_g": m.protein_g,
+                    "fat_g": m.fat_g,
+                    "carbs_g": m.carbs_g,
+                    "meal_type": m.meal_type,
+                }
+                for m in meals
+            ],
+            "consumed": consumed,
+            "targets": targets,
+            "progress": progress,
+        }
+
     async def delete_meal(args: dict[str, Any]) -> dict[str, Any]:
         async with sessionmaker() as session:
             ok = await crud.delete_meal_log(session, int(args["telegram_id"]), int(args["meal_id"]))
@@ -152,6 +209,7 @@ def meal_tool_handlers(sessionmaker: async_sessionmaker, *, timezone_name: str =
     return {
         "add_meal": add_meal,
         "get_meals_today": get_meals_today,
+        "get_today_summary": get_today_summary,
         "delete_meal": delete_meal,
         "update_meal": update_meal,
     }

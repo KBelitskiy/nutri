@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from aiogram import F, Router
-from aiogram.filters import Command, or_f, StateFilter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+import logging
 from zoneinfo import ZoneInfo
 
-from bot.database import crud
+from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, or_f, StateFilter
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-# История диалога с агентом: user_id -> список пар (сообщение пользователя, ответ ассистента), макс. 10 пар
-CONVERSATION_HISTORY: dict[int, list[tuple[str, str]]] = {}
-MAX_HISTORY_PAIRS = 10
+from bot.database import crud
 from bot.handlers.start import OnboardingStates
 from bot.handlers.weight import WeightStates
-from bot.handlers.utils import progress_text
 from bot.keyboards import BTN_HISTORY, MAIN_MENU_BUTTONS
 from bot.prompts import context_message
 from bot.runtime import get_app_context
-from bot.services.vision import analyze_meal_photo
+
+logger = logging.getLogger(__name__)
+
+CONVERSATION_HISTORY: dict[int, list[tuple[str, str]]] = {}
+MAX_HISTORY_PAIRS = 10
 
 router = Router()
 
@@ -70,7 +72,6 @@ async def photo_meal(message: Message) -> None:
     if not message.from_user or not message.photo:
         return
     ctx = get_app_context()
-    tz = ZoneInfo(ctx.settings.league_report_timezone)
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
         if user is None:
@@ -78,48 +79,35 @@ async def photo_meal(message: Message) -> None:
             return
 
     photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
+    file = await message.bot.get_file(photo.file_id)  # type: ignore[union-attr]
     image_url = f"https://api.telegram.org/file/bot{ctx.settings.telegram_bot_token}/{file.file_path}"
-    caption = (message.caption or "").strip() or None
+    caption = (message.caption or "").strip() or "Пользователь отправил фото еды. Оцени КБЖУ и запиши приём пищи."
 
+    context = context_message(
+        message.from_user.id, timezone_name=ctx.settings.league_report_timezone
+    )
+    user_id = message.from_user.id
+    history = CONVERSATION_HISTORY.get(user_id, [])[-MAX_HISTORY_PAIRS:]
     try:
-        parsed = await analyze_meal_photo(
-            ctx.agent.client,
-            ctx.settings.openai_model_vision,
-            image_url,
-            caption=caption,
+        answer = await ctx.agent.ask(
+            caption,
+            context=context,
+            history=history if history else None,
+            image_urls=[image_url],
         )
     except Exception:  # noqa: BLE001
-        await message.answer("Не удалось распознать фото. Попробуй еще раз или опиши блюдо текстом.")
+        logger.exception("Agent failed on photo message")
+        await message.answer("Не удалось распознать фото. Попробуй ещё раз или опиши блюдо текстом.")
         return
 
-    async with ctx.sessionmaker() as session:
-        await crud.add_meal_log(
-            session=session,
-            telegram_id=message.from_user.id,
-            description=str(parsed["description"]),
-            calories=float(parsed["calories"]),
-            protein_g=float(parsed["protein_g"]),
-            fat_g=float(parsed["fat_g"]),
-            carbs_g=float(parsed["carbs_g"]),
-            photo_file_id=photo.file_id,
-            meal_type="snack",
-        )
-        user = await crud.get_user(session, message.from_user.id)
-        consumed = await crud.get_meal_summary_for_day(
-            session, message.from_user.id, timezone=tz
-        )
-
-    if user is None:
-        await message.answer("Сначала пройди /start.")
-        return
-    await message.answer(
-        "Записал прием пищи по фото:\n"
-        f"{parsed['description']}\n"
-        f"{float(parsed['calories']):.1f} ккал | Б {float(parsed['protein_g']):.1f} | "
-        f"Ж {float(parsed['fat_g']):.1f} | У {float(parsed['carbs_g']):.1f}\n\n"
-        f"{progress_text(consumed, user)}"
-    )
+    if user_id not in CONVERSATION_HISTORY:
+        CONVERSATION_HISTORY[user_id] = []
+    CONVERSATION_HISTORY[user_id].append((f"[фото еды] {caption}", answer))
+    CONVERSATION_HISTORY[user_id] = CONVERSATION_HISTORY[user_id][-MAX_HISTORY_PAIRS:]
+    try:
+        await message.answer(answer, parse_mode="HTML")
+    except TelegramBadRequest:
+        await message.answer(answer)
 
 
 @router.message(
@@ -137,7 +125,9 @@ async def text_message(message: Message) -> None:
         await message.answer("Сначала пройди /start.")
         return
 
-    context = context_message(message.from_user.id)
+    context = context_message(
+        message.from_user.id, timezone_name=ctx.settings.league_report_timezone
+    )
     user_id = message.from_user.id
     history = CONVERSATION_HISTORY.get(user_id, [])[-MAX_HISTORY_PAIRS:]
     try:
@@ -147,6 +137,7 @@ async def text_message(message: Message) -> None:
             history=history if history else None,
         )
     except Exception:  # noqa: BLE001
+        logger.exception("Agent failed on text message")
         await message.answer("Сервис ИИ временно недоступен. Попробуй позже.")
         return
     # Добавляем пару в историю и обрезаем до MAX_HISTORY_PAIRS
@@ -154,5 +145,8 @@ async def text_message(message: Message) -> None:
         CONVERSATION_HISTORY[user_id] = []
     CONVERSATION_HISTORY[user_id].append((message.text.strip(), answer))
     CONVERSATION_HISTORY[user_id] = CONVERSATION_HISTORY[user_id][-MAX_HISTORY_PAIRS:]
-    await message.answer(answer)
+    try:
+        await message.answer(answer, parse_mode="HTML")
+    except TelegramBadRequest:
+        await message.answer(answer)
 
