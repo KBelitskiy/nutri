@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from bot.services import league_scheduler
 
@@ -53,21 +55,57 @@ async def test_send_weekly_reports_iterates_all_group_chats(monkeypatch) -> None
     send_weekly_for_chat.assert_awaited_once_with(bot, sessionmaker, -30, "UTC")
 
 
-async def test_send_weight_reminders_iterates_all_users(monkeypatch) -> None:
+async def test_send_weight_reminders_sends_only_to_matching_timezones(monkeypatch) -> None:
     session = object()
     sessionmaker = _sessionmaker_with_session(session)
     bot = MagicMock()
 
-    monkeypatch.setattr(league_scheduler.crud, "get_all_user_ids", AsyncMock(return_value=[101, 202, 303]))
+    monkeypatch.setattr(
+        league_scheduler.crud,
+        "get_distinct_user_timezones",
+        AsyncMock(return_value=["Europe/Moscow", "America/New_York", None]),
+    )
+    monkeypatch.setattr(
+        league_scheduler.crud,
+        "get_user_ids_by_timezones",
+        AsyncMock(return_value=[101, 202]),
+    )
+    monkeypatch.setattr(
+        league_scheduler,
+        "_timezones_with_hour",
+        lambda tzs, target_hour, fallback_tz: ["Europe/Moscow"],
+    )
     send_for_user = AsyncMock()
     monkeypatch.setattr(league_scheduler, "_send_weight_reminder_for_user", send_for_user)
 
     await league_scheduler.send_weight_reminders(bot, sessionmaker, "UTC")
 
-    assert send_for_user.await_count == 3
+    assert send_for_user.await_count == 2
     send_for_user.assert_any_await(bot, 101)
     send_for_user.assert_any_await(bot, 202)
-    send_for_user.assert_any_await(bot, 303)
+
+
+async def test_send_weight_reminders_skips_when_no_matching_tz(monkeypatch) -> None:
+    session = object()
+    sessionmaker = _sessionmaker_with_session(session)
+    bot = MagicMock()
+
+    monkeypatch.setattr(
+        league_scheduler.crud,
+        "get_distinct_user_timezones",
+        AsyncMock(return_value=["Europe/Moscow"]),
+    )
+    monkeypatch.setattr(
+        league_scheduler,
+        "_timezones_with_hour",
+        lambda tzs, target_hour, fallback_tz: [],
+    )
+    send_for_user = AsyncMock()
+    monkeypatch.setattr(league_scheduler, "_send_weight_reminder_for_user", send_for_user)
+
+    await league_scheduler.send_weight_reminders(bot, sessionmaker, "UTC")
+
+    send_for_user.assert_not_awaited()
 
 
 def test_start_league_scheduler_adds_weight_reminder_job(monkeypatch) -> None:
@@ -104,11 +142,11 @@ def test_start_league_scheduler_adds_weight_reminder_job(monkeypatch) -> None:
 
     assert scheduler.started is True
     ids = {j["id"] for j in scheduler.jobs}
-    assert "weight_reminder_9am" in ids
-    weight_job = next(j for j in scheduler.jobs if j["id"] == "weight_reminder_9am")
+    assert "weight_reminder_hourly" in ids
+    weight_job = next(j for j in scheduler.jobs if j["id"] == "weight_reminder_hourly")
     assert weight_job["func"] is league_scheduler.send_weight_reminders
-    assert weight_job["trigger"].kw["hour"] == 9
     assert weight_job["trigger"].kw["minute"] == 0
+    assert "hour" not in weight_job["trigger"].kw
 
 
 async def test_start_league_scheduler_fallback_when_apscheduler_missing(monkeypatch) -> None:
@@ -127,6 +165,34 @@ async def test_start_league_scheduler_fallback_when_apscheduler_missing(monkeypa
     ctor_mock.assert_called_once_with(bot=bot, sessionmaker=sessionmaker, timezone_name="UTC")
     start_mock.assert_called_once()
     assert result is scheduler_mock
+
+
+def test_timezones_with_hour_filters_correctly() -> None:
+    fixed_utc = datetime(2025, 6, 15, 6, 0, 0, tzinfo=ZoneInfo("UTC"))
+    with patch("bot.services.league_scheduler.datetime") as mock_dt:
+        mock_dt.now = lambda tz: fixed_utc.astimezone(tz)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = league_scheduler._timezones_with_hour(
+            ["Europe/Moscow", "America/New_York", "UTC", None],
+            target_hour=9,
+            fallback_tz="Europe/London",
+        )
+    assert "Europe/Moscow" in result
+    assert "America/New_York" not in result
+    assert "UTC" not in result
+
+
+def test_timezones_with_hour_uses_fallback_for_none() -> None:
+    fixed_utc = datetime(2025, 6, 15, 6, 0, 0, tzinfo=ZoneInfo("UTC"))
+    with patch("bot.services.league_scheduler.datetime") as mock_dt:
+        mock_dt.now = lambda tz: fixed_utc.astimezone(tz)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = league_scheduler._timezones_with_hour(
+            [None],
+            target_hour=9,
+            fallback_tz="Europe/Moscow",
+        )
+    assert None in result
 
 
 def test_asyncio_scheduler_seconds_until_positive() -> None:

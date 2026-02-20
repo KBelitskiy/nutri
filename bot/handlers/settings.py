@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo, available_timezones
+
 from aiogram import F, Router
 from aiogram.filters import Command, or_f
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -25,12 +27,15 @@ async def profile_update(message: Message) -> None:
             await message.answer("Сначала пройди онбординг: /start")
             return
         if len(parts) != 3:
+            tz_display = user.timezone or "не задан (используется серверный)"
             await message.answer(
                 "Профиль:\n"
                 f"Пол: {user.gender}\nВозраст: {user.age}\nРост: {user.height_cm} см\n"
-                f"Стартовый вес: {user.weight_start_kg} кг\nАктивность: {user.activity_level}\nЦель: {user.goal}\n\n"
+                f"Стартовый вес: {user.weight_start_kg} кг\nАктивность: {user.activity_level}\nЦель: {user.goal}\n"
+                f"Часовой пояс: {tz_display}\n\n"
                 "Обновление: /profile <field> <value>\n"
-                "Поля: gender, age, height_cm, weight_start_kg, activity_level, goal",
+                "Поля: gender, age, height_cm, weight_start_kg, activity_level, goal, timezone\n"
+                "Пример: /profile timezone Europe/Moscow",
                 reply_markup=PROFILE_SUBMENU_KB,
             )
             return
@@ -72,6 +77,18 @@ async def profile_update(message: Message) -> None:
                 await message.answer("goal: lose/maintain/gain")
                 return
             user.goal = value
+        elif field == "timezone":
+            tz_value = raw_value.strip()
+            if tz_value not in available_timezones():
+                await message.answer(
+                    "Неизвестный часовой пояс. Укажите в формате IANA, "
+                    "например: Europe/Moscow, Asia/Almaty, America/New_York"
+                )
+                return
+            user.timezone = tz_value
+            await session.commit()
+            await message.answer(f"Часовой пояс установлен: {tz_value}")
+            return
         else:
             await message.answer("Неизвестное поле.")
             return

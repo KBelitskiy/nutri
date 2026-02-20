@@ -4,10 +4,10 @@ from __future__ import annotations
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 # Тексты кнопок главного меню (с эмодзи)
-BTN_TODAY = "📊 Сегодня"
+BTN_TODAY = "📊 Сводка за сегодня"
 BTN_PROFILE = "👤 Профиль"
 BTN_STATS = "📈 Статистика"
-BTN_HISTORY = "📋 История"
+BTN_HISTORY = "📋 Отредактировать записанное"
 BTN_SUGGEST = "💡 Рекомендации"
 BTN_LEAGUE_TODAY = "🏁 Лига: сегодня"
 BTN_LEAGUE_WEEK = "🏁 Лига: неделя"
@@ -31,20 +31,20 @@ MAIN_MENU_BUTTONS = (
     BTN_BACK,
 )
 
-# Главное меню: Сегодня, Статистика, История, Рекомендации, Профиль
+# Главное меню: Сегодня, Статистика, Вес, Рекомендации, Профиль
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_TODAY), KeyboardButton(text=BTN_STATS)],
-        [KeyboardButton(text=BTN_HISTORY), KeyboardButton(text=BTN_SUGGEST)],
+        [KeyboardButton(text=BTN_WEIGHT), KeyboardButton(text=BTN_SUGGEST)],
         [KeyboardButton(text=BTN_PROFILE)],
     ],
     resize_keyboard=True,
 )
 
-# Подменю при нажатии «Профиль»: Вес, Помощь, Сброс данных, В меню
+# Подменю при нажатии «Профиль»: Отредактировать записанное, Помощь, Сброс данных, В меню
 PROFILE_SUBMENU_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=BTN_WEIGHT), KeyboardButton(text=BTN_HELP)],
+        [KeyboardButton(text=BTN_HISTORY), KeyboardButton(text=BTN_HELP)],
         [KeyboardButton(text=BTN_RESET)],
         [KeyboardButton(text=BTN_BACK)],
     ],

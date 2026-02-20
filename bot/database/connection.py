@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from bot.database.models import Base
+logger = logging.getLogger(__name__)
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
@@ -28,9 +33,17 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+def _run_alembic_upgrade(database_url: str) -> None:
+    """Apply all pending Alembic migrations (sync, safe to call from a thread)."""
+    project_root = Path(__file__).resolve().parents[2]
+    alembic_cfg = Config(str(project_root / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_cfg, "head")
+
+
 async def init_db() -> None:
     if _engine is None:
         raise RuntimeError("Database engine is not initialized. Call init_engine first.")
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+    url = str(_engine.url)
+    await asyncio.to_thread(_run_alembic_upgrade, url)
+    logger.info("Database migrations applied successfully")

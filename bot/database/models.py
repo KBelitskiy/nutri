@@ -21,6 +21,7 @@ class User(Base):
     weight_start_kg: Mapped[float] = mapped_column(Float)
     activity_level: Mapped[str] = mapped_column(String(32))
     goal: Mapped[str] = mapped_column(String(16))
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     daily_calories_target: Mapped[float] = mapped_column(Float)
     daily_protein_target: Mapped[float] = mapped_column(Float)
     daily_fat_target: Mapped[float] = mapped_column(Float)

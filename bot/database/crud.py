@@ -30,6 +30,32 @@ async def get_all_user_ids(session: AsyncSession) -> list[int]:
     return [int(x) for x in result.scalars().all()]
 
 
+async def get_distinct_user_timezones(session: AsyncSession) -> list[str | None]:
+    result = await session.execute(
+        select(User.timezone).distinct()
+    )
+    return list(result.scalars().all())
+
+
+async def get_user_ids_by_timezones(
+    session: AsyncSession, timezone_names: list[str | None],
+) -> list[int]:
+    """Return user IDs whose timezone column matches any of the given values."""
+    filters = []
+    clean_names = [tz for tz in timezone_names if tz is not None]
+    if clean_names:
+        filters.append(User.timezone.in_(clean_names))
+    if None in timezone_names:
+        filters.append(User.timezone.is_(None))
+    if not filters:
+        return []
+    from sqlalchemy import or_
+    result = await session.execute(
+        select(User.telegram_id).where(or_(*filters)).order_by(User.telegram_id.asc())
+    )
+    return [int(x) for x in result.scalars().all()]
+
+
 async def get_users_by_ids(session: AsyncSession, telegram_ids: list[int]) -> list[User]:
     if not telegram_ids:
         return []

@@ -53,8 +53,13 @@ class AsyncioLeagueScheduler:
 
     async def _run_weight_reminders(self) -> None:
         while True:
-            await asyncio.sleep(self._seconds_until(hour=9, minute=0))
+            await asyncio.sleep(self._seconds_until_next_hour())
             await send_weight_reminders(self.bot, self.sessionmaker, self.timezone_name)
+
+    def _seconds_until_next_hour(self) -> float:
+        now = datetime.now(tz=self._tz)
+        target = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+        return max(1.0, (target - now).total_seconds())
 
     def _seconds_until(self, hour: int, minute: int, weekday: int | None = None) -> float:
         now = datetime.now(tz=self._tz)
@@ -81,13 +86,25 @@ async def _user_ids(sessionmaker: async_sessionmaker) -> list[int]:
         return await crud.get_all_user_ids(session)
 
 
+def _timezones_with_hour(timezones: list[str | None], target_hour: int, fallback_tz: str) -> list[str | None]:
+    """Return timezone names from *timezones* where the local hour equals *target_hour* right now."""
+    matching: list[str | None] = []
+    for tz_name in timezones:
+        effective = tz_name or fallback_tz
+        try:
+            now_local = datetime.now(tz=ZoneInfo(effective))
+        except (KeyError, Exception):  # noqa: BLE001
+            continue
+        if now_local.hour == target_hour:
+            matching.append(tz_name)
+    return matching
+
+
 async def _send_weight_reminder_for_user(bot: Bot, user_id: int) -> None:
     text = "Доброе утро! Не забудь взвеситься и отправить вес командой /weight."
     try:
         await bot.send_message(chat_id=user_id, text=text)
     except (TelegramForbiddenError, TelegramBadRequest):
-        # Пользователь мог заблокировать бота или удалить чат.
-        # Данные пользователя не удаляем, чтобы не терять историю.
         logger.warning("Cannot send weight reminder to user %s (chat unavailable)", user_id)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to send weight reminder to user %s", user_id)
@@ -138,8 +155,15 @@ async def send_weekly_reports(bot: Bot, sessionmaker: async_sessionmaker, timezo
 
 
 async def send_weight_reminders(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
-    _ = timezone_name
-    for user_id in await _user_ids(sessionmaker):
+    """Send weight reminders only to users whose local time is currently 9 AM."""
+    async with sessionmaker() as session:
+        all_tz = await crud.get_distinct_user_timezones(session)
+    matching = _timezones_with_hour(all_tz, target_hour=9, fallback_tz=timezone_name)
+    if not matching:
+        return
+    async with sessionmaker() as session:
+        user_ids = await crud.get_user_ids_by_timezones(session, matching)
+    for user_id in user_ids:
         await _send_weight_reminder_for_user(bot, user_id)
 
 
@@ -176,9 +200,9 @@ def start_league_scheduler(
     )
     scheduler.add_job(
         send_weight_reminders,
-        CronTrigger(hour=9, minute=0, timezone=tz),
+        CronTrigger(minute=0, timezone=tz),
         kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
-        id="weight_reminder_9am",
+        id="weight_reminder_hourly",
         replace_existing=True,
     )
     scheduler.start()
