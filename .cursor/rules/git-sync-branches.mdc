@@ -1,0 +1,17 @@
+---
+description: Синхронизация веток main и master при коммите
+alwaysApply: true
+---
+
+# Синхронизация веток main и master
+
+После каждого коммита в ветку `main` необходимо синхронизировать ветку `master`:
+
+```bash
+git checkout master
+git reset --hard main
+git checkout main
+```
+
+- Актуальная ветка — `main`, `master` всегда должна быть её копией.
+- Если нужно запушить `master` в remote `amvera`, выполнить `git push amvera master`.
