@@ -18,7 +18,6 @@ from bot.services.pending_media import pop_pending_photos
 
 logger = logging.getLogger(__name__)
 
-CONVERSATION_HISTORY: dict[int, list[tuple[str, str]]] = {}
 MAX_HISTORY_PAIRS = 10
 
 router = Router()
@@ -85,10 +84,13 @@ async def photo_meal(message: Message) -> None:
     caption = (message.caption or "").strip() or "Пользователь отправил фото еды. Оцени КБЖУ и запиши приём пищи."
 
     context = context_message(
-        message.from_user.id, timezone_name=ctx.settings.league_report_timezone
+        message.from_user.id,
+        timezone_name=ctx.settings.league_report_timezone,
+        chat_id=message.chat.id if message.chat else None,
     )
     user_id = message.from_user.id
-    history = CONVERSATION_HISTORY.get(user_id, [])[-MAX_HISTORY_PAIRS:]
+    async with ctx.sessionmaker() as session:
+        history = await crud.get_recent_conversation(session, user_id, limit=MAX_HISTORY_PAIRS)
     try:
         answer = await ctx.agent.ask(
             caption,
@@ -101,10 +103,10 @@ async def photo_meal(message: Message) -> None:
         await message.answer("Не удалось распознать фото. Попробуй ещё раз или опиши блюдо текстом.")
         return
 
-    if user_id not in CONVERSATION_HISTORY:
-        CONVERSATION_HISTORY[user_id] = []
-    CONVERSATION_HISTORY[user_id].append((f"[фото еды] {caption}", answer))
-    CONVERSATION_HISTORY[user_id] = CONVERSATION_HISTORY[user_id][-MAX_HISTORY_PAIRS:]
+    async with ctx.sessionmaker() as session:
+        await crud.add_conversation_message(session, user_id, "user", f"[фото еды] {caption}")
+        await crud.add_conversation_message(session, user_id, "assistant", answer)
+        await crud.clear_old_conversation(session, user_id, keep_pairs=MAX_HISTORY_PAIRS)
     try:
         await message.answer(answer, parse_mode="HTML")
     except TelegramBadRequest:
@@ -127,17 +129,25 @@ async def text_message(message: Message) -> None:
     if not message.from_user or not message.text:
         return
     ctx = get_app_context()
+    is_group_chat = message.chat.type in {"group", "supergroup"}
+    league_request = "лига" in message.text.lower()
     async with ctx.sessionmaker() as session:
         user = await crud.get_user(session, message.from_user.id)
-    if user is None:
+    if user is None and not is_group_chat:
         await message.answer("Сначала пройди /start.")
+        return
+    if user is None and is_group_chat and not league_request:
+        await message.answer("Для личного учёта открой бота в личке и пройди /start.")
         return
 
     context = context_message(
-        message.from_user.id, timezone_name=ctx.settings.league_report_timezone
+        message.from_user.id,
+        timezone_name=ctx.settings.league_report_timezone,
+        chat_id=message.chat.id if message.chat else None,
     )
     user_id = message.from_user.id
-    history = CONVERSATION_HISTORY.get(user_id, [])[-MAX_HISTORY_PAIRS:]
+    async with ctx.sessionmaker() as session:
+        history = await crud.get_recent_conversation(session, user_id, limit=MAX_HISTORY_PAIRS)
     try:
         answer = await ctx.agent.ask(
             message.text,
@@ -148,11 +158,10 @@ async def text_message(message: Message) -> None:
         logger.exception("Agent failed on text message")
         await message.answer("Сервис ИИ временно недоступен. Попробуй позже.")
         return
-    # Добавляем пару в историю и обрезаем до MAX_HISTORY_PAIRS
-    if user_id not in CONVERSATION_HISTORY:
-        CONVERSATION_HISTORY[user_id] = []
-    CONVERSATION_HISTORY[user_id].append((message.text.strip(), answer))
-    CONVERSATION_HISTORY[user_id] = CONVERSATION_HISTORY[user_id][-MAX_HISTORY_PAIRS:]
+    async with ctx.sessionmaker() as session:
+        await crud.add_conversation_message(session, user_id, "user", message.text.strip())
+        await crud.add_conversation_message(session, user_id, "assistant", answer)
+        await crud.clear_old_conversation(session, user_id, keep_pairs=MAX_HISTORY_PAIRS)
     try:
         await message.answer(answer, parse_mode="HTML")
     except TelegramBadRequest:

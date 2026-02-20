@@ -62,6 +62,18 @@ def user_tools_schema() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "reset_user_data",
+                "description": "Удаляет все данные пользователя: профиль, питание, вес, историю и достижения.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"telegram_id": {"type": "integer"}},
+                    "required": ["telegram_id"],
+                },
+            },
+        },
     ]
 
 
@@ -161,9 +173,19 @@ def user_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
             "new_targets": targets,
         }
 
+    async def reset_user_data(args: dict[str, Any]) -> dict[str, Any]:
+        tid = int(args["telegram_id"])
+        async with sessionmaker() as session:
+            user = await crud.get_user(session, tid)
+            if user is None:
+                return {"error": "User not found"}
+            await crud.delete_user_data(session, tid)
+        return {"ok": True}
+
     return {
         "get_user_profile": get_user_profile,
         "get_daily_targets": get_daily_targets,
         "update_user_profile": update_user_profile,
+        "reset_user_data": reset_user_data,
     }
 

@@ -9,10 +9,20 @@ AGENT_SYSTEM = load("agent/system")
 MEAL_PARSE = load("agent/meal_parse")
 
 
-def context_message(telegram_id: int, *, timezone_name: str = "UTC") -> str:
-    """Контекстное сообщение для агента с telegram_id и текущей датой."""
+def context_message(
+    telegram_id: int,
+    *,
+    timezone_name: str = "UTC",
+    chat_id: int | None = None,
+) -> str:
+    """Контекстное сообщение для агента с telegram_id/chat_id и текущей датой."""
     from zoneinfo import ZoneInfo
 
     tz = ZoneInfo(timezone_name)
     now = datetime.now(tz=tz).strftime("%Y-%m-%d %H:%M %Z")
-    return load("agent/context", telegram_id=telegram_id, now=now)
+    return load(
+        "agent/context",
+        telegram_id=telegram_id,
+        chat_id=chat_id if chat_id is not None else "",
+        now=now,
+    )

@@ -14,9 +14,13 @@ from bot.middlewares.rate_limit import OpenAIRateLimitMiddleware
 from bot.runtime import AppContext, set_app_context
 from bot.services.ai_agent import AIAgent
 from bot.services.league_scheduler import start_league_scheduler
+from bot.tools.group_tools import group_tool_handlers, group_tools_schema
 from bot.tools.goal_tools import goal_tool_handlers, goal_tools_schema
 from bot.tools.meal_tools import meal_tool_handlers, meal_tools_schema
 from bot.tools.stats_tools import stats_tool_handlers, stats_tools_schema
+from bot.tools.streak_tools import streak_tool_handlers, streak_tools_schema
+from bot.tools.template_tools import template_tool_handlers, template_tools_schema
+from bot.tools.water_tools import water_tool_handlers, water_tools_schema
 from bot.tools.user_tools import user_tool_handlers, user_tools_schema
 from bot.tools.weight_tools import weight_tool_handlers, weight_tools_schema
 
@@ -29,11 +33,19 @@ def configure_agent(ctx: AppContext) -> None:
     schemas.extend(user_tools_schema())
     schemas.extend(weight_tools_schema())
     schemas.extend(goal_tools_schema())
+    schemas.extend(water_tools_schema())
+    schemas.extend(template_tools_schema())
+    schemas.extend(streak_tools_schema())
+    schemas.extend(group_tools_schema())
     handlers.update(meal_tool_handlers(ctx.sessionmaker, timezone_name=ctx.settings.league_report_timezone))
     handlers.update(stats_tool_handlers(ctx.sessionmaker))
     handlers.update(user_tool_handlers(ctx.sessionmaker))
     handlers.update(weight_tool_handlers(ctx.sessionmaker))
     handlers.update(goal_tool_handlers(ctx.sessionmaker))
+    handlers.update(water_tool_handlers(ctx.sessionmaker, timezone_name=ctx.settings.league_report_timezone))
+    handlers.update(template_tool_handlers(ctx.sessionmaker))
+    handlers.update(streak_tool_handlers(ctx.sessionmaker))
+    handlers.update(group_tool_handlers(ctx.sessionmaker, timezone_name=ctx.settings.league_report_timezone))
     ctx.agent.register_tools(schemas, handlers)
 
 

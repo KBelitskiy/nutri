@@ -1,2 +1,3 @@
 - telegram_id пользователя: {{telegram_id}}. Все вызовы tools должны использовать этот telegram_id.
+- chat_id текущего чата: {{chat_id}}. Для групповых tools используй этот chat_id.
 - Текущая дата и время: {{now}}.

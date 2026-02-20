@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo, available_timezones
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -22,21 +24,73 @@ class OnboardingStates(StatesGroup):
     weight = State()
     activity = State()
     goal = State()
+    timezone = State()
+    timezone_custom = State()
 
+
+GENDER_MAP = {
+    "мужской": "male",
+    "женский": "female",
+    "male": "male",
+    "female": "female",
+}
+ACTIVITY_MAP = {
+    "низкая": "low",
+    "лёгкая": "light",
+    "легкая": "light",
+    "средняя": "moderate",
+    "высокая": "high",
+    "очень высокая": "very_high",
+    "low": "low",
+    "light": "light",
+    "moderate": "moderate",
+    "high": "high",
+    "very_high": "very_high",
+}
+GOAL_MAP = {
+    "похудеть": "lose",
+    "поддерживать вес": "maintain",
+    "набрать массу": "gain",
+    "lose": "lose",
+    "maintain": "maintain",
+    "gain": "gain",
+}
+TIMEZONE_MAP = {
+    "Москва (UTC+3)": "Europe/Moscow",
+    "Екатеринбург (UTC+5)": "Asia/Yekaterinburg",
+    "Новосибирск (UTC+7)": "Asia/Novosibirsk",
+    "Владивосток (UTC+10)": "Asia/Vladivostok",
+    "Другой": None,
+}
 
 GENDER_KB = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="male"), KeyboardButton(text="female")]],
+    keyboard=[[KeyboardButton(text="Мужской"), KeyboardButton(text="Женский")]],
     resize_keyboard=True,
 )
 ACTIVITY_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="low"), KeyboardButton(text="light")],
-        [KeyboardButton(text="moderate"), KeyboardButton(text="high"), KeyboardButton(text="very_high")],
+        [KeyboardButton(text="Низкая"), KeyboardButton(text="Лёгкая")],
+        [KeyboardButton(text="Средняя"), KeyboardButton(text="Высокая")],
+        [KeyboardButton(text="Очень высокая")],
     ],
     resize_keyboard=True,
 )
 GOAL_KB = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="lose"), KeyboardButton(text="maintain"), KeyboardButton(text="gain")]],
+    keyboard=[
+        [
+            KeyboardButton(text="Похудеть"),
+            KeyboardButton(text="Поддерживать вес"),
+            KeyboardButton(text="Набрать массу"),
+        ]
+    ],
+    resize_keyboard=True,
+)
+TIMEZONE_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Москва (UTC+3)"), KeyboardButton(text="Екатеринбург (UTC+5)")],
+        [KeyboardButton(text="Новосибирск (UTC+7)"), KeyboardButton(text="Владивосток (UTC+10)")],
+        [KeyboardButton(text="Другой")],
+    ],
     resize_keyboard=True,
 )
 
@@ -59,7 +113,7 @@ async def command_start(message: Message, state: FSMContext) -> None:
 
     await state.set_state(OnboardingStates.gender)
     await message.answer(
-        "Привет! Я NutriBot. Давай заполним профиль.\nУкажи пол: male / female",
+        "Привет! Я NutriBot. Давай заполним профиль.\nУкажи пол:",
         reply_markup=GENDER_KB,
     )
 
@@ -67,10 +121,11 @@ async def command_start(message: Message, state: FSMContext) -> None:
 @router.message(OnboardingStates.gender)
 async def onboarding_gender(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip().lower()
-    if value not in {"male", "female"}:
-        await message.answer("Введите `male` или `female`.")
+    normalized = GENDER_MAP.get(value)
+    if normalized is None:
+        await message.answer("Выбери вариант кнопкой: Мужской или Женский.")
         return
-    await state.update_data(gender=value)
+    await state.update_data(gender=normalized)
     await state.set_state(OnboardingStates.age)
     await message.answer("Возраст (полных лет)?", reply_markup=ReplyKeyboardRemove())
 
@@ -111,33 +166,49 @@ async def onboarding_weight(message: Message, state: FSMContext) -> None:
 @router.message(OnboardingStates.activity)
 async def onboarding_activity(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip().lower()
-    if value not in {"low", "light", "moderate", "high", "very_high"}:
-        await message.answer("Введите одно из: low, light, moderate, high, very_high.")
+    normalized = ACTIVITY_MAP.get(value)
+    if normalized is None:
+        await message.answer("Выбери уровень активности кнопкой.")
         return
-    await state.update_data(activity_level=value)
+    await state.update_data(activity_level=normalized)
     await state.set_state(OnboardingStates.goal)
-    await message.answer("Цель: lose / maintain / gain", reply_markup=GOAL_KB)
+    await message.answer("Какая у тебя цель?", reply_markup=GOAL_KB)
 
 
 @router.message(OnboardingStates.goal)
 async def onboarding_goal(message: Message, state: FSMContext) -> None:
-    goal = (message.text or "").strip().lower()
-    if goal not in {"lose", "maintain", "gain"}:
-        await message.answer("Введите одну цель: lose / maintain / gain.")
+    goal_text = (message.text or "").strip().lower()
+    goal = GOAL_MAP.get(goal_text)
+    if goal is None:
+        await message.answer("Выбери цель кнопкой.")
         return
 
     data = await state.get_data()
     data["goal"] = goal
+    await state.update_data(goal=goal)
+    await state.set_state(OnboardingStates.timezone)
+    await message.answer(
+        "Выбери свой часовой пояс:",
+        reply_markup=TIMEZONE_KB,
+    )
+
+
+async def _complete_onboarding(
+    message: Message,
+    state: FSMContext,
+    data: dict[str, object],
+    timezone_name: str,
+) -> None:
     if not message.from_user:
         return
 
     targets = calculate_daily_targets(
-        gender=data["gender"],
+        gender=str(data["gender"]),
         age=int(data["age"]),
         height_cm=float(data["height_cm"]),
         weight_kg=float(data["weight_start_kg"]),
-        activity_level=data["activity_level"],
-        goal=goal,
+        activity_level=str(data["activity_level"]),
+        goal=str(data["goal"]),
     )
     payload = {
         "telegram_id": message.from_user.id,
@@ -147,7 +218,8 @@ async def onboarding_goal(message: Message, state: FSMContext) -> None:
         "height_cm": float(data["height_cm"]),
         "weight_start_kg": float(data["weight_start_kg"]),
         "activity_level": data["activity_level"],
-        "goal": goal,
+        "goal": data["goal"],
+        "timezone": timezone_name,
         **targets,
     }
 
@@ -165,6 +237,41 @@ async def onboarding_goal(message: Message, state: FSMContext) -> None:
         "Выбери действие в меню или отправь текст с едой, например: гречка 200 г и куриная грудка.",
         reply_markup=MAIN_MENU_KB,
     )
+
+
+@router.message(OnboardingStates.timezone)
+async def onboarding_timezone(message: Message, state: FSMContext) -> None:
+    selected = (message.text or "").strip()
+    if selected not in TIMEZONE_MAP:
+        await message.answer("Выбери часовой пояс кнопкой или нажми «Другой».")
+        return
+    mapped = TIMEZONE_MAP[selected]
+    if mapped is None:
+        await state.set_state(OnboardingStates.timezone_custom)
+        await message.answer(
+            "Введи часовой пояс в формате IANA, например Europe/Moscow:",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+    await state.update_data(timezone=mapped)
+    data = await state.get_data()
+    await _complete_onboarding(message, state, data, mapped)
+
+
+@router.message(OnboardingStates.timezone_custom)
+async def onboarding_timezone_custom(message: Message, state: FSMContext) -> None:
+    value = (message.text or "").strip()
+    if value not in available_timezones():
+        await message.answer("Неизвестный часовой пояс. Пример: Europe/Moscow")
+        return
+    try:
+        ZoneInfo(value)
+    except Exception:  # noqa: BLE001
+        await message.answer("Не удалось распознать часовой пояс. Попробуй снова.")
+        return
+    await state.update_data(timezone=value)
+    data = await state.get_data()
+    await _complete_onboarding(message, state, data, value)
 
 
 @router.message(F.text == BTN_BACK)

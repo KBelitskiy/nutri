@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,7 +11,10 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database import crud
+from bot.prompts.loader import load as load_prompt
+from bot.runtime import get_app_context
 from bot.services.league_reports import build_daily_league_report, build_weekly_league_report
+from bot.services.streaks import evaluate_daily_streak_for_user
 from bot.services.weight_plan import calculate_plan_targets, compare_progress, get_expected_weight_for_date
 
 logger = logging.getLogger(__name__)
@@ -34,8 +38,11 @@ class AsyncioLeagueScheduler:
     def start(self) -> None:
         self._tasks.append(asyncio.create_task(self._run_daily(), name="league_daily_report"))
         self._tasks.append(asyncio.create_task(self._run_weekly(), name="league_weekly_report"))
+        self._tasks.append(asyncio.create_task(self._run_weekly_coaching(), name="weekly_coaching_hourly"))
         self._tasks.append(asyncio.create_task(self._run_weight_reminders(), name="weight_reminder_9am"))
+        self._tasks.append(asyncio.create_task(self._run_meal_reminders(), name="meal_reminder_hourly"))
         self._tasks.append(asyncio.create_task(self._run_weight_plan_checks(), name="weight_plan_check_10am"))
+        self._tasks.append(asyncio.create_task(self._run_streak_checks(), name="daily_streak_check_2330"))
 
     def shutdown(self, wait: bool = False) -> None:
         _ = wait
@@ -58,14 +65,37 @@ class AsyncioLeagueScheduler:
             await asyncio.sleep(self._seconds_until_next_hour())
             await send_weight_reminders(self.bot, self.sessionmaker, self.timezone_name)
 
+    async def _run_weekly_coaching(self) -> None:
+        while True:
+            await asyncio.sleep(self._seconds_until_next_hour())
+            await send_weekly_coaching(self.bot, self.sessionmaker, self.timezone_name)
+
     async def _run_weight_plan_checks(self) -> None:
         while True:
             await asyncio.sleep(self._seconds_until_next_hour())
             await send_weight_plan_checks(self.bot, self.sessionmaker, self.timezone_name)
 
+    async def _run_meal_reminders(self) -> None:
+        while True:
+            await asyncio.sleep(self._seconds_until_next_hour())
+            await send_meal_reminders(self.bot, self.sessionmaker, self.timezone_name)
+
+    async def _run_streak_checks(self) -> None:
+        while True:
+            await asyncio.sleep(self._seconds_until_next_half_hour())
+            await send_daily_streak_checks(self.bot, self.sessionmaker, self.timezone_name)
+
     def _seconds_until_next_hour(self) -> float:
         now = datetime.now(tz=self._tz)
         target = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+        return max(1.0, (target - now).total_seconds())
+
+    def _seconds_until_next_half_hour(self) -> float:
+        now = datetime.now(tz=self._tz)
+        if now.minute < 30:
+            target = now.replace(minute=30, second=0, microsecond=0)
+        else:
+            target = (now.replace(minute=30, second=0, microsecond=0) + timedelta(hours=1))
         return max(1.0, (target - now).total_seconds())
 
     def _seconds_until(self, hour: int, minute: int, weekday: int | None = None) -> float:
@@ -180,6 +210,18 @@ async def send_weight_reminders(bot: Bot, sessionmaker: async_sessionmaker, time
     async with sessionmaker() as session:
         user_ids = await crud.get_user_ids_by_timezones(session, matching)
     for user_id in user_ids:
+        has_weight_today = False
+        try:
+            async with sessionmaker() as session:
+                has_weight_today = await crud.has_weight_log_today(
+                    session,
+                    user_id,
+                    timezone=ZoneInfo(timezone_name),
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("Skip has_weight_log_today check for user %s", user_id)
+        if has_weight_today:
+            continue
         await _send_weight_reminder_for_user(bot, user_id)
 
 
@@ -301,6 +343,160 @@ async def send_weight_plan_checks(bot: Bot, sessionmaker: async_sessionmaker, ti
                 )
 
 
+def _parse_reminder_hours(value: str | None) -> set[int]:
+    if not value:
+        return {9, 13, 19}
+    result: set[int] = set()
+    for part in value.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if token.isdigit():
+            hour = int(token)
+            if 0 <= hour <= 23:
+                result.add(hour)
+    return result or {9, 13, 19}
+
+
+async def send_meal_reminders(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    async with sessionmaker() as session:
+        user_ids = await crud.get_all_user_ids(session)
+    if not user_ids:
+        return
+    async with sessionmaker() as session:
+        users = await crud.get_users_by_ids(session, user_ids)
+
+    for user in users:
+        tz_name = user.timezone or timezone_name
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except Exception:  # noqa: BLE001
+            user_tz = ZoneInfo(timezone_name)
+        now_local = datetime.now(tz=user_tz)
+        reminder_hours = _parse_reminder_hours(user.meal_reminder_times)
+
+        if now_local.hour == 21:
+            async with sessionmaker() as session:
+                consumed = await crud.get_meal_summary_for_day(
+                    session,
+                    user.telegram_id,
+                    timezone=user_tz,
+                )
+            if consumed.get("calories", 0.0) < float(user.daily_calories_target) * 0.6:
+                await _send_user_text(
+                    bot,
+                    user.telegram_id,
+                    (
+                        f"Ты записал {consumed.get('calories', 0.0):.0f} из "
+                        f"{user.daily_calories_target:.0f} ккал. "
+                        "Проверь, не забыл ли записать приемы пищи."
+                    ),
+                )
+            continue
+
+        if now_local.hour not in reminder_hours:
+            continue
+        async with sessionmaker() as session:
+            has_recent = await crud.has_meals_in_last_hours(
+                session,
+                user.telegram_id,
+                hours=2,
+                now=datetime.now(tz=UTC),
+            )
+        if has_recent:
+            continue
+        await _send_user_text(
+            bot,
+            user.telegram_id,
+            f"Уже {now_local.hour:02d}:00. Не забудь записать прием пищи.",
+        )
+
+
+async def send_weekly_coaching(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    async with sessionmaker() as session:
+        user_ids = await crud.get_all_user_ids(session)
+    if not user_ids:
+        return
+    async with sessionmaker() as session:
+        users = await crud.get_users_by_ids(session, user_ids)
+    app_ctx = get_app_context()
+
+    for user in users:
+        tz_name = user.timezone or timezone_name
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except Exception:  # noqa: BLE001
+            user_tz = ZoneInfo(timezone_name)
+        now_local = datetime.now(tz=user_tz)
+        if now_local.weekday() != 6 or now_local.hour != 20:
+            continue
+
+        async with sessionmaker() as session:
+            payload = await crud.get_weekly_coaching_data(
+                session,
+                user.telegram_id,
+                days=7,
+                timezone=user_tz,
+            )
+        if "error" in payload:
+            continue
+        prompt = load_prompt(
+            "coaching/weekly",
+            profile=json.dumps(payload["profile"], ensure_ascii=False),
+            daily_totals=json.dumps(payload["daily_totals"], ensure_ascii=False),
+            weight_history=json.dumps(payload["weight_history"], ensure_ascii=False),
+        )
+        try:
+            answer = await app_ctx.agent.ask(prompt, use_tools=False)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to generate weekly coaching for user %s", user.telegram_id)
+            continue
+        await _send_user_text(bot, user.telegram_id, answer)
+
+
+async def send_daily_streak_checks(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    """Evaluate daily streaks for users whose local time is 23:30."""
+    async with sessionmaker() as session:
+        all_tz = await crud.get_distinct_user_timezones(session)
+    matching = _timezones_with_hour(all_tz, target_hour=23, fallback_tz=timezone_name)
+    if not matching:
+        return
+    async with sessionmaker() as session:
+        user_ids = await crud.get_user_ids_by_timezones(session, matching)
+
+    for user_id in user_ids:
+        async with sessionmaker() as session:
+            user = await crud.get_user(session, user_id)
+            if user is None:
+                continue
+            tz_name = user.timezone or timezone_name
+            try:
+                user_tz = ZoneInfo(tz_name)
+            except Exception:  # noqa: BLE001
+                user_tz = ZoneInfo(timezone_name)
+            result = await evaluate_daily_streak_for_user(
+                session,
+                user_id,
+                timezone=user_tz,
+            )
+
+        if "error" in result:
+            continue
+        new_badges = list(result.get("new_badges", []))
+        streak_days = int(result.get("streak_days", 0))
+        if not new_badges:
+            continue
+        badges_text = ", ".join(new_badges)
+        await _send_user_text(
+            bot,
+            user_id,
+            (
+                f"Новый бейдж: {badges_text}.\n"
+                f"Текущий стрик по калориям: {streak_days} дн. Продолжай в том же темпе!"
+            ),
+        )
+
+
 def start_league_scheduler(
     bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str
 ) -> AsyncIOScheduler | AsyncioLeagueScheduler:
@@ -340,10 +536,31 @@ def start_league_scheduler(
         replace_existing=True,
     )
     scheduler.add_job(
+        send_weekly_coaching,
+        CronTrigger(minute=0, timezone=tz),
+        kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
+        id="weekly_coaching_hourly",
+        replace_existing=True,
+    )
+    scheduler.add_job(
         send_weight_plan_checks,
         CronTrigger(minute=0, timezone=tz),
         kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
         id="weight_plan_check_hourly",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_meal_reminders,
+        CronTrigger(minute=0, timezone=tz),
+        kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
+        id="meal_reminder_hourly",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_daily_streak_checks,
+        CronTrigger(minute=30, timezone=tz),
+        kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
+        id="daily_streak_check_2330",
         replace_existing=True,
     )
     scheduler.start()

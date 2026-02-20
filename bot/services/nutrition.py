@@ -20,6 +20,12 @@ GOAL_CALORIE_DELTA: dict[Goal, float] = {
     "gain": 300.0,
 }
 
+GOAL_MACRO_SPLITS: dict[Goal, tuple[float, float, float]] = {
+    "lose": (0.35, 0.30, 0.35),
+    "maintain": (0.30, 0.25, 0.45),
+    "gain": (0.30, 0.20, 0.50),
+}
+
 
 def calculate_bmr(gender: Gender, age: int, height_cm: float, weight_kg: float) -> float:
     base = 10 * weight_kg + 6.25 * height_cm - 5 * age
@@ -40,10 +46,10 @@ def calculate_daily_targets(
 ) -> dict[str, float]:
     bmr = calculate_bmr(gender, age, height_cm, weight_kg)
     calories = max(1200.0, bmr * ACTIVITY_MULTIPLIERS[activity_level] + GOAL_CALORIE_DELTA[goal])
-
-    protein_g = round((calories * 0.30) / 4, 1)
-    fat_g = round((calories * 0.25) / 9, 1)
-    carbs_g = round((calories * 0.45) / 4, 1)
+    protein_ratio, fat_ratio, carbs_ratio = GOAL_MACRO_SPLITS[goal]
+    protein_g = round((calories * protein_ratio) / 4, 1)
+    fat_g = round((calories * fat_ratio) / 9, 1)
+    carbs_g = round((calories * carbs_ratio) / 4, 1)
     return {
         "daily_calories_target": round(calories, 1),
         "daily_protein_target": protein_g,

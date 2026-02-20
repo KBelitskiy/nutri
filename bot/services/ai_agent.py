@@ -57,6 +57,7 @@ class AIAgent:
         use_tools: bool = True,
         history: list[tuple[str, str]] | None = None,
         image_urls: list[str] | None = None,
+        max_tool_rounds: int = 10,
     ) -> str:
         messages: list[dict[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM}]
         if context:
@@ -77,7 +78,7 @@ class AIAgent:
             )
             return response.choices[0].message.content or "Не удалось сформировать ответ."
 
-        while True:
+        for _ in range(max_tool_rounds):
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -110,6 +111,7 @@ class AIAgent:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                 )
+        return "Извини, не удалось обработать запрос. Попробуй переформулировать."
 
     async def parse_meal_text(self, text: str) -> dict[str, float | str]:
         response = await self.client.chat.completions.create(

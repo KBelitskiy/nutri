@@ -42,7 +42,13 @@ async def stats(message: Message) -> None:
         if user is None:
             await message.answer("Сначала пройди /start.")
             return
-        stats_data = await crud.get_meal_stats(session, message.from_user.id, start, end)
+        stats_data = await crud.get_daily_avg_stats(
+            session,
+            message.from_user.id,
+            start,
+            end,
+            timezone=tz,
+        )
 
     meals_count = int(stats_data["meals_count"])
     if meals_count == 0:

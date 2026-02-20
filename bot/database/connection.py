@@ -8,6 +8,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,17 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 def init_engine(database_url: str) -> None:
     global _engine, _sessionmaker
-    _engine = create_async_engine(database_url, echo=False, future=True)
+    if database_url.startswith("sqlite+aiosqlite:///:memory:"):
+        # Keep a single in-memory DB across connections (tests/smoke).
+        _engine = create_async_engine(
+            database_url,
+            echo=False,
+            future=True,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+    else:
+        _engine = create_async_engine(database_url, echo=False, future=True)
     _sessionmaker = async_sessionmaker(bind=_engine, expire_on_commit=False)
 
 
@@ -45,5 +56,11 @@ async def init_db() -> None:
     if _engine is None:
         raise RuntimeError("Database engine is not initialized. Call init_engine first.")
     url = str(_engine.url)
+    if url.startswith("sqlite+aiosqlite:///:memory:"):
+        from bot.database.models import Base
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database schema created for in-memory SQLite")
+        return
     await asyncio.to_thread(_run_alembic_upgrade, url)
     logger.info("Database migrations applied successfully")

@@ -69,7 +69,7 @@ def stats_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
             end = now
 
         async with sessionmaker() as session:
-            data = await crud.get_meal_stats(session, int(args["telegram_id"]), start, end)
+            data = await crud.get_daily_avg_stats(session, int(args["telegram_id"]), start, end)
             return {"period": period, "start": start.isoformat(), "end": end.isoformat(), **data}
 
     async def get_nutrition_history(args: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +84,7 @@ def stats_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
             if user is None:
                 return {"error": "User not found"}
             meals = await crud.get_meals_for_period(session, tid, start, end)
-            averages = await crud.get_meal_stats(session, tid, start, end)
+            averages = await crud.get_daily_avg_stats(session, tid, start, end)
 
         daily_map: dict[str, dict[str, float]] = {}
         for meal in meals:
