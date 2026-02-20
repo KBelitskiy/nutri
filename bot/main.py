@@ -27,7 +27,7 @@ def configure_agent(ctx: AppContext) -> None:
     schemas.extend(stats_tools_schema())
     schemas.extend(user_tools_schema())
     schemas.extend(weight_tools_schema())
-    handlers.update(meal_tool_handlers(ctx.sessionmaker))
+    handlers.update(meal_tool_handlers(ctx.sessionmaker, timezone_name=ctx.settings.league_report_timezone))
     handlers.update(stats_tool_handlers(ctx.sessionmaker))
     handlers.update(user_tool_handlers(ctx.sessionmaker))
     handlers.update(weight_tool_handlers(ctx.sessionmaker))

@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database import crud
+from bot.services.nutrition import summarize_progress
 
 
 def meal_tools_schema() -> list[dict[str, Any]]:
@@ -76,12 +77,15 @@ def meal_tools_schema() -> list[dict[str, Any]]:
     ]
 
 
-def meal_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
+def meal_tool_handlers(sessionmaker: async_sessionmaker, *, timezone_name: str = "UTC") -> dict[str, Any]:
+    tz = ZoneInfo(timezone_name)
+
     async def add_meal(args: dict[str, Any]) -> dict[str, Any]:
+        tid = int(args["telegram_id"])
         async with sessionmaker() as session:
             row = await crud.add_meal_log(
                 session=session,
-                telegram_id=int(args["telegram_id"]),
+                telegram_id=tid,
                 description=str(args["description"]),
                 calories=float(args["calories"]),
                 protein_g=float(args["protein_g"]),
@@ -89,7 +93,24 @@ def meal_tool_handlers(sessionmaker: async_sessionmaker) -> dict[str, Any]:
                 carbs_g=float(args["carbs_g"]),
                 meal_type=str(args.get("meal_type", "snack")),
             )
-            return {"ok": True, "meal_id": row.id}
+            user = await crud.get_user(session, tid)
+            consumed = await crud.get_meal_summary_for_day(session, tid, timezone=tz)
+
+        result: dict[str, Any] = {"ok": True, "meal_id": row.id}
+        if user is not None:
+            targets = {
+                "daily_calories_target": user.daily_calories_target,
+                "daily_protein_target": user.daily_protein_target,
+                "daily_fat_target": user.daily_fat_target,
+                "daily_carbs_target": user.daily_carbs_target,
+            }
+            progress = summarize_progress(consumed, targets)
+            result["daily_summary"] = {
+                "consumed": consumed,
+                "targets": targets,
+                "progress": progress,
+            }
+        return result
 
     async def get_meals_today(args: dict[str, Any]) -> dict[str, Any]:
         async with sessionmaker() as session:
