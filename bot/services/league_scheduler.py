@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.database import crud
 from bot.services.league_reports import build_daily_league_report, build_weekly_league_report
+from bot.services.weight_plan import calculate_plan_targets, compare_progress, get_expected_weight_for_date
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class AsyncioLeagueScheduler:
         self._tasks.append(asyncio.create_task(self._run_daily(), name="league_daily_report"))
         self._tasks.append(asyncio.create_task(self._run_weekly(), name="league_weekly_report"))
         self._tasks.append(asyncio.create_task(self._run_weight_reminders(), name="weight_reminder_9am"))
+        self._tasks.append(asyncio.create_task(self._run_weight_plan_checks(), name="weight_plan_check_10am"))
 
     def shutdown(self, wait: bool = False) -> None:
         _ = wait
@@ -55,6 +57,11 @@ class AsyncioLeagueScheduler:
         while True:
             await asyncio.sleep(self._seconds_until_next_hour())
             await send_weight_reminders(self.bot, self.sessionmaker, self.timezone_name)
+
+    async def _run_weight_plan_checks(self) -> None:
+        while True:
+            await asyncio.sleep(self._seconds_until_next_hour())
+            await send_weight_plan_checks(self.bot, self.sessionmaker, self.timezone_name)
 
     def _seconds_until_next_hour(self) -> float:
         now = datetime.now(tz=self._tz)
@@ -108,6 +115,15 @@ async def _send_weight_reminder_for_user(bot: Bot, user_id: int) -> None:
         logger.warning("Cannot send weight reminder to user %s (chat unavailable)", user_id)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to send weight reminder to user %s", user_id)
+
+
+async def _send_user_text(bot: Bot, user_id: int, text: str) -> None:
+    try:
+        await bot.send_message(chat_id=user_id, text=text)
+    except (TelegramForbiddenError, TelegramBadRequest):
+        logger.warning("Cannot send message to user %s (chat unavailable)", user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to send message to user %s", user_id)
 
 
 async def _send_daily_for_chat(
@@ -167,6 +183,124 @@ async def send_weight_reminders(bot: Bot, sessionmaker: async_sessionmaker, time
         await _send_weight_reminder_for_user(bot, user_id)
 
 
+async def send_weight_plan_checks(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    async with sessionmaker() as session:
+        users = await crud.get_users_with_active_plan(session)
+
+    for user in users:
+        tz_name = user.timezone or timezone_name
+        try:
+            user_tz = ZoneInfo(tz_name)
+        except Exception:  # noqa: BLE001
+            user_tz = ZoneInfo(timezone_name)
+        now_local = datetime.now(tz=user_tz)
+        if now_local.hour != 10:
+            continue
+
+        async with sessionmaker() as session:
+            latest = await crud.get_latest_weight(session, user.telegram_id)
+            if latest is None:
+                continue
+
+            latest_local_date = latest.logged_at.astimezone(user_tz).date() if latest.logged_at else None
+            if latest_local_date != now_local.date():
+                continue
+
+            if (
+                user.weight_plan_mode is None
+                or user.target_weight_kg is None
+                or user.weight_plan_start_date is None
+                or user.weight_plan_start_kg is None
+            ):
+                continue
+
+            expected = get_expected_weight_for_date(
+                plan_start_date=user.weight_plan_start_date,
+                plan_start_kg=float(user.weight_plan_start_kg),
+                target_weight=float(user.target_weight_kg),
+                mode=user.weight_plan_mode,
+                gender=user.gender,
+                age=user.age,
+                height_cm=user.height_cm,
+                activity_level=user.activity_level,
+                check_date=datetime.now(tz=UTC),
+            )
+            actual = float(latest.weight_kg)
+            progress = compare_progress(
+                expected_kg=expected,
+                actual_kg=actual,
+                target_weight=float(user.target_weight_kg),
+                current_weight=float(user.weight_plan_start_kg),
+            )
+
+            if user.goal == "lose" and actual <= float(user.target_weight_kg):
+                await _send_user_text(
+                    bot,
+                    user.telegram_id,
+                    (
+                        "Отличная работа! Цель по весу достигнута 🎉\n"
+                        "Рекомендую перейти на режим поддержания и закрепить результат."
+                    ),
+                )
+                continue
+            if user.goal == "gain" and actual >= float(user.target_weight_kg):
+                await _send_user_text(
+                    bot,
+                    user.telegram_id,
+                    (
+                        "Поздравляю, цель по набору достигнута 🎉\n"
+                        "Дальше можно перейти на поддержание, чтобы стабилизировать вес."
+                    ),
+                )
+                continue
+
+            lagging = not bool(progress["on_track"]) and float(progress["deviation_kg"]) > 0.5
+            if lagging:
+                mode_order = ["light", "medium", "hard"]
+                current_mode = user.weight_plan_mode if user.weight_plan_mode in mode_order else "medium"
+                current_idx = mode_order.index(current_mode)
+                next_mode = mode_order[min(current_idx + 1, len(mode_order) - 1)]
+
+                targets = calculate_plan_targets(
+                    current_weight=actual,
+                    target_weight=float(user.target_weight_kg),
+                    gender=user.gender,
+                    age=user.age,
+                    height_cm=user.height_cm,
+                    activity_level=user.activity_level,
+                    mode=next_mode,
+                )
+                user.weight_plan_mode = next_mode
+                user.daily_calories_target = float(targets["daily_calories"])
+                user.daily_protein_target = float(targets["daily_protein"])
+                user.daily_fat_target = float(targets["daily_fat"])
+                user.daily_carbs_target = float(targets["daily_carbs"])
+                await session.commit()
+
+                await _send_user_text(
+                    bot,
+                    user.telegram_id,
+                    (
+                        f"Есть отставание от плана: {progress['deviation_kg']:+.2f} кг.\n"
+                        f"Ожидалось: {expected:.2f} кг, факт: {actual:.2f} кг.\n"
+                        f"Скорректировал режим на {next_mode}: {targets['daily_calories']:.0f} ккал/день.\n"
+                        "Усиль контроль порций и ежедневную активность (шаги/кардио)."
+                    ),
+                )
+                continue
+
+            # Поддержка не ежедневно, примерно раз в 4 дня.
+            if now_local.toordinal() % 4 == 0:
+                await _send_user_text(
+                    bot,
+                    user.telegram_id,
+                    (
+                        "Ты идешь по плану. Отличный темп!\n"
+                        f"Сегодня: факт {actual:.2f} кг, ожидалось {expected:.2f} кг."
+                    ),
+                )
+
+
 def start_league_scheduler(
     bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str
 ) -> AsyncIOScheduler | AsyncioLeagueScheduler:
@@ -203,6 +337,13 @@ def start_league_scheduler(
         CronTrigger(minute=0, timezone=tz),
         kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
         id="weight_reminder_hourly",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_weight_plan_checks,
+        CronTrigger(minute=0, timezone=tz),
+        kwargs={"bot": bot, "sessionmaker": sessionmaker, "timezone_name": timezone_name},
+        id="weight_plan_check_hourly",
         replace_existing=True,
     )
     scheduler.start()

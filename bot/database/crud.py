@@ -101,12 +101,31 @@ async def get_latest_weight_at_or_before(
     return result.scalar_one_or_none()
 
 
+async def get_latest_weight(session: AsyncSession, telegram_id: int) -> WeightLog | None:
+    result = await session.execute(
+        select(WeightLog)
+        .where(WeightLog.telegram_id == telegram_id)
+        .order_by(WeightLog.logged_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_weight_logs(session: AsyncSession, telegram_id: int, limit: int = 30) -> list[WeightLog]:
     result = await session.execute(
         select(WeightLog)
         .where(WeightLog.telegram_id == telegram_id)
         .order_by(WeightLog.logged_at.desc())
         .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_users_with_active_plan(session: AsyncSession) -> list[User]:
+    result = await session.execute(
+        select(User)
+        .where(User.weight_plan_mode.is_not(None), User.target_weight_kg.is_not(None))
+        .order_by(User.telegram_id.asc())
     )
     return list(result.scalars().all())
 

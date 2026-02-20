@@ -14,6 +14,7 @@ from bot.middlewares.rate_limit import OpenAIRateLimitMiddleware
 from bot.runtime import AppContext, set_app_context
 from bot.services.ai_agent import AIAgent
 from bot.services.league_scheduler import start_league_scheduler
+from bot.tools.goal_tools import goal_tool_handlers, goal_tools_schema
 from bot.tools.meal_tools import meal_tool_handlers, meal_tools_schema
 from bot.tools.stats_tools import stats_tool_handlers, stats_tools_schema
 from bot.tools.user_tools import user_tool_handlers, user_tools_schema
@@ -27,10 +28,12 @@ def configure_agent(ctx: AppContext) -> None:
     schemas.extend(stats_tools_schema())
     schemas.extend(user_tools_schema())
     schemas.extend(weight_tools_schema())
+    schemas.extend(goal_tools_schema())
     handlers.update(meal_tool_handlers(ctx.sessionmaker, timezone_name=ctx.settings.league_report_timezone))
     handlers.update(stats_tool_handlers(ctx.sessionmaker))
     handlers.update(user_tool_handlers(ctx.sessionmaker))
     handlers.update(weight_tool_handlers(ctx.sessionmaker))
+    handlers.update(goal_tool_handlers(ctx.sessionmaker))
     ctx.agent.register_tools(schemas, handlers)
 
 

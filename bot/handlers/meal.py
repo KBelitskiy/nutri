@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, or_f, StateFilter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.database import crud
 from bot.handlers.start import OnboardingStates
@@ -14,6 +14,7 @@ from bot.handlers.weight import WeightStates
 from bot.keyboards import BTN_HISTORY, MAIN_MENU_BUTTONS
 from bot.prompts import context_message
 from bot.runtime import get_app_context
+from bot.services.pending_media import pop_pending_photos
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,13 @@ async def photo_meal(message: Message) -> None:
         await message.answer(answer, parse_mode="HTML")
     except TelegramBadRequest:
         await message.answer(answer)
+    pending = pop_pending_photos(user_id)
+    for item in pending:
+        await message.answer_photo(
+            photo=BufferedInputFile(item.content, filename=item.filename),
+            caption=item.caption,
+            reply_markup=item.keyboard,
+        )
 
 
 @router.message(
@@ -149,4 +157,11 @@ async def text_message(message: Message) -> None:
         await message.answer(answer, parse_mode="HTML")
     except TelegramBadRequest:
         await message.answer(answer)
+    pending = pop_pending_photos(user_id)
+    for item in pending:
+        await message.answer_photo(
+            photo=BufferedInputFile(item.content, filename=item.filename),
+            caption=item.caption,
+            reply_markup=item.keyboard,
+        )
 
