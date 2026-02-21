@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -13,6 +14,9 @@ ActivityLevel = Literal["low", "light", "moderate", "high", "very_high"]
 LOSE_DEFICIT_KCAL: dict[Mode, float] = {"light": 300.0, "medium": 500.0, "hard": 750.0}
 GAIN_SURPLUS_KCAL: dict[Mode, float] = {"light": 200.0, "medium": 350.0, "hard": 500.0}
 MIN_CALORIES: dict[Gender, float] = {"female": 1200.0, "male": 1500.0}
+
+# 5 лет — достаточно даже для лайт-режима при большой разнице в весе
+_MAX_FORECAST_WEEKS = 560
 
 
 def _resolve_direction(current_weight: float, target_weight: float) -> GoalDirection:
@@ -33,12 +37,6 @@ def _calorie_floor(gender: str) -> float:
     return MIN_CALORIES["female"] if gender == "female" else MIN_CALORIES["male"]
 
 
-def _bounded_rate_factor(progress_to_goal: float) -> float:
-    # По мере приближения к цели скорость замедляется (нелинейно).
-    factor = 0.6 + 0.4 * (progress_to_goal**0.7)
-    return max(0.45, min(1.0, factor))
-
-
 def build_weight_forecast(
     current_weight: float,
     target_weight: float,
@@ -48,6 +46,17 @@ def build_weight_forecast(
     activity_level: str,
     mode: str,
 ) -> list[dict]:
+    """
+    Понедельный прогноз веса.
+
+    Модель:
+    - Дефицит/профицит поддерживается фиксированным (питание корректируется под новый TDEE).
+    - BMR пересчитывается каждую неделю по текущему весу (снижение метаболизма).
+    - После 8 недель применяется адаптивный термогенез: эффективный TDEE снижается
+      до −5% от расчётного, что немного уменьшает реальный дефицит.
+    - Минимальный калораж: 1200 ккал (ж) / 1500 ккал (м).
+    - Прогноз продолжается до достижения цели (не более 260 недель).
+    """
     direction = _resolve_direction(current_weight, target_weight)
     if direction == "maintain":
         today = datetime.now().date()
@@ -55,9 +64,7 @@ def build_weight_forecast(
 
     mode_typed: Mode = mode if mode in {"light", "medium", "hard"} else "medium"
     activity_typed: ActivityLevel = (
-        activity_level
-        if activity_level in ACTIVITY_MULTIPLIERS
-        else "moderate"
+        activity_level if activity_level in ACTIVITY_MULTIPLIERS else "moderate"
     )
 
     distance_total = abs(current_weight - target_weight)
@@ -65,35 +72,33 @@ def build_weight_forecast(
         today = datetime.now().date()
         return [{"week": 0, "date": today.isoformat(), "weight_kg": round(current_weight, 2)}]
 
+    base_delta = _base_delta_kcal(direction, mode_typed)
+    floor_kcal = _calorie_floor(gender)
+
     weight = float(current_weight)
     date_cursor = datetime.now().date()
     result = [{"week": 0, "date": date_cursor.isoformat(), "weight_kg": round(weight, 2)}]
 
-    max_weeks = 104
-    for week in range(1, max_weeks + 1):
-        remaining = abs(weight - target_weight)
-        if remaining <= 0.05:
+    for week in range(1, _MAX_FORECAST_WEEKS + 1):
+        if abs(weight - target_weight) <= 0.05:
             break
 
         bmr = calculate_bmr(gender=gender, age=age, height_cm=height_cm, weight_kg=weight)  # type: ignore[arg-type]
         tdee = bmr * ACTIVITY_MULTIPLIERS[activity_typed]
-        delta_kcal = _base_delta_kcal(direction, mode_typed)
 
-        adaptive_factor = 1.0
-        if week > 8:
-            # Долгий дефицит/профицит постепенно снижает ожидаемую эффективность.
-            adaptive_factor = max(0.95, 1.0 - 0.001 * (week - 8))
-
-        progress = remaining / distance_total
-        rate_factor = _bounded_rate_factor(progress)
-        effective_delta = delta_kcal * adaptive_factor * rate_factor
-
-        calories_plan = tdee + effective_delta
-        if direction == "lose":
-            calories_plan = max(calories_plan, _calorie_floor(gender))
-            actual_daily_delta = calories_plan - tdee
+        # Адаптивный термогенез: после 8 недель дефицита тело экономит до 5% энергии.
+        if week > 8 and direction == "lose":
+            adapt_reduction = min(0.05, 0.005 * (week - 8))
+            effective_tdee = tdee * (1.0 - adapt_reduction)
         else:
-            actual_daily_delta = calories_plan - tdee
+            effective_tdee = tdee
+
+        # Целевая калорийность = эффективный TDEE + фиксированный дефицит
+        calories_target = effective_tdee + base_delta
+        calories_target = max(calories_target, floor_kcal)
+
+        # Фактический ежедневный баланс (после клемпа)
+        actual_daily_delta = calories_target - effective_tdee
 
         weekly_change = (actual_daily_delta * 7.0) / 7700.0
         if direction == "lose":
@@ -111,9 +116,6 @@ def build_weight_forecast(
         date_cursor += timedelta(days=7)
         result.append({"week": week, "date": date_cursor.isoformat(), "weight_kg": round(weight, 2)})
 
-        if abs(weight - target_weight) <= 0.05:
-            break
-
     return result
 
 
@@ -129,15 +131,13 @@ def calculate_plan_targets(
     direction = _resolve_direction(current_weight, target_weight)
     mode_typed: Mode = mode if mode in {"light", "medium", "hard"} else "medium"
     activity_typed: ActivityLevel = (
-        activity_level
-        if activity_level in ACTIVITY_MULTIPLIERS
-        else "moderate"
+        activity_level if activity_level in ACTIVITY_MULTIPLIERS else "moderate"
     )
 
     bmr = calculate_bmr(gender=gender, age=age, height_cm=height_cm, weight_kg=current_weight)  # type: ignore[arg-type]
     tdee = bmr * ACTIVITY_MULTIPLIERS[activity_typed]
-    delta_kcal = _base_delta_kcal(direction, mode_typed)
-    calories = tdee + delta_kcal
+    base_delta = _base_delta_kcal(direction, mode_typed)
+    calories = tdee + base_delta
     calories = max(calories, _calorie_floor(gender))
 
     if direction == "lose":
@@ -147,25 +147,15 @@ def calculate_plan_targets(
 
     protein_g = max(0.0, protein_per_kg * current_weight)
     fat_g = max(0.8 * current_weight, 0.0)
-
     kcal_after_pf = calories - (protein_g * 4.0 + fat_g * 9.0)
     carbs_g = max(0.0, kcal_after_pf / 4.0)
 
-    forecast = build_weight_forecast(
-        current_weight=current_weight,
-        target_weight=target_weight,
-        gender=gender,
-        age=age,
-        height_cm=height_cm,
-        activity_level=activity_level,
-        mode=mode_typed,
-    )
-    estimated_weeks = max(0, len(forecast) - 1)
+    # Скорость из реального дефицита (после клемпа калорий)
+    actual_delta = calories - tdee
+    weekly_loss_kg = abs(actual_delta) * 7.0 / 7700.0
 
-    if estimated_weeks > 0:
-        weekly_change_abs = abs(current_weight - target_weight) / estimated_weeks
-    else:
-        weekly_change_abs = 0.0
+    distance = abs(current_weight - target_weight)
+    estimated_weeks = int(math.ceil(distance / weekly_loss_kg)) if weekly_loss_kg > 0 else 0
 
     return {
         "daily_calories": round(calories, 1),
@@ -173,8 +163,8 @@ def calculate_plan_targets(
         "daily_fat": round(fat_g, 1),
         "daily_carbs": round(carbs_g, 1),
         "estimated_weeks": int(estimated_weeks),
-        "weekly_loss_kg": round(weekly_change_abs, 3),
-        "daily_deficit": round(abs(delta_kcal), 1),
+        "weekly_loss_kg": round(weekly_loss_kg, 3),
+        "daily_deficit": round(abs(base_delta), 1),
     }
 
 
