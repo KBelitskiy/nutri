@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -10,16 +11,28 @@ from bot.config import Settings, load_settings, _default_sqlite_url
 
 
 class TestDefaultSqliteUrl:
-    def test_returns_sqlite_aiosqlite_path(self) -> None:
-        with patch.dict(os.environ, {"SQLITE_PATH": "/tmp/nutri.db"}, clear=False):
-            url = _default_sqlite_url()
-        assert url.startswith("sqlite+aiosqlite:///")
-        assert "nutri" in url or "tmp" in url
+    def test_uses_data_dir_when_exists(self) -> None:
+        """Когда /data существует — всегда используется /data/nutri.db, SQLITE_PATH игнорируется."""
+        with patch("bot.config._persistent_data_dir", return_value=Path("/data")):
+            with patch.dict(os.environ, {"SQLITE_PATH": "/custom/path/db.sqlite"}, clear=False):
+                url = _default_sqlite_url()
+        assert url == "sqlite+aiosqlite:////data/nutri.db"
 
-    def test_uses_env_sqlite_path(self) -> None:
-        with patch.dict(os.environ, {"SQLITE_PATH": "/custom/path/db.sqlite"}, clear=False):
-            url = _default_sqlite_url()
-        assert "custom" in url or "path" in url or "db" in url
+    def test_uses_env_sqlite_path_when_no_data_dir(self) -> None:
+        """Без /data используется SQLITE_PATH из переменных окружения."""
+        with patch("bot.config._persistent_data_dir", return_value=None):
+            with patch.dict(os.environ, {"SQLITE_PATH": "/custom/db.sqlite"}, clear=False):
+                url = _default_sqlite_url()
+        assert "custom" in url or "db" in url
+
+    def test_falls_back_to_current_dir_when_no_data_and_no_env(self) -> None:
+        """Без /data и без SQLITE_PATH используется ./nutri.db."""
+        env = {k: v for k, v in os.environ.items() if k != "SQLITE_PATH"}
+        with patch("bot.config._persistent_data_dir", return_value=None):
+            with patch.dict(os.environ, env, clear=True):
+                url = _default_sqlite_url()
+        assert url.startswith("sqlite+aiosqlite:///")
+        assert "nutri" in url
 
 
 class TestLoadSettings:
