@@ -226,20 +226,28 @@ async def send_weight_reminders(bot: Bot, sessionmaker: async_sessionmaker, time
 
 
 async def send_weight_plan_checks(bot: Bot, sessionmaker: async_sessionmaker, timezone_name: str) -> None:
+    # Получаем только ID, чтобы объекты User не стали detached после закрытия сессии.
     async with sessionmaker() as session:
-        users = await crud.get_users_with_active_plan(session)
+        plan_users = await crud.get_users_with_active_plan(session)
+        user_ids = [u.telegram_id for u in plan_users]
 
-    for user in users:
-        tz_name = user.timezone or timezone_name
-        try:
-            user_tz = ZoneInfo(tz_name)
-        except Exception:  # noqa: BLE001
-            user_tz = ZoneInfo(timezone_name)
-        now_local = datetime.now(tz=user_tz)
-        if now_local.hour != 10:
-            continue
-
+    for user_id in user_ids:
+        # Одна сессия на весь цикл обработки пользователя: читаем и пишем в ней же,
+        # поэтому user отслеживается session и изменения корректно сохраняются.
         async with sessionmaker() as session:
+            user = await crud.get_user(session, user_id)
+            if user is None:
+                continue
+
+            tz_name = user.timezone or timezone_name
+            try:
+                user_tz = ZoneInfo(tz_name)
+            except Exception:  # noqa: BLE001
+                user_tz = ZoneInfo(timezone_name)
+            now_local = datetime.now(tz=user_tz)
+            if now_local.hour != 10:
+                continue
+
             latest = await crud.get_latest_weight(session, user.telegram_id)
             if latest is None:
                 continue
