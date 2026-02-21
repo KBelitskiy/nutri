@@ -20,22 +20,11 @@ class Settings:
     league_report_timezone: str
 
 
-def _persistent_data_dir() -> Path | None:
-    """Возвращает /data если она смонтирована (persistent mount на Amvera), иначе None."""
-    data_dir = Path("/data")
-    return data_dir if data_dir.exists() else None
+_SQLITE_PATH = Path("/data/nutri.db")
 
 
 def _default_sqlite_url() -> str:
-    # Если /data существует (persistent mount на Amvera) — всегда используем его,
-    # чтобы база не терялась при пересборке контейнера.
-    data_dir = _persistent_data_dir()
-    if data_dir is not None:
-        path = data_dir / "nutri.db"
-    else:
-        sqlite_path = os.getenv("SQLITE_PATH", "./nutri.db")
-        path = Path(sqlite_path).expanduser().resolve()
-    return f"sqlite+aiosqlite:///{path}"
+    return f"sqlite+aiosqlite:///{_SQLITE_PATH}"
 
 
 def load_settings() -> Settings:
